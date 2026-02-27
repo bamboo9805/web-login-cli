@@ -1,0 +1,29 @@
+{
+  "name": "web-login-cli",
+  "version": "1.0.0",
+  "description": "Universal browser login CLI with persistent Puppeteer debug session",
+  "main": "login_web.js",
+  "bin": {
+    "login-web": "./login_web.js"
+  },
+  "scripts": {
+    "start": "node login_web.js",
+    "login:web": "node login_web.js",
+    "check": "node --check login_web.js"
+  },
+  "keywords": [
+    "puppeteer",
+    "login",
+    "browser",
+    "automation",
+    "mcp"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "puppeteer": "^24.37.2"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
