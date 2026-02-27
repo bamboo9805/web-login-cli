@@ -6,6 +6,8 @@
 
 - 打开任意网站登录页并手动登录
 - 自动尝试点击登录入口与二维码登录切换
+- 二维码监听服务（HTTP + SSE，支持手机局域网扫码）
+- 二维码监听 MCP Server（可被 Cursor/Claude 调用）
 - 保存 cookies 到本地
 - 保存浏览器 WebSocket 调试连接信息
 - 生成 MCP 配置示例
@@ -70,6 +72,56 @@ PUPPETEER_EXECUTABLE_PATH="/Applications/Google Chrome.app/Contents/MacOS/Google
 
 登录完成后浏览器会保持打开；按 `Ctrl+C` 关闭。
 
+## QR Monitor Service
+
+先启动目标站点登录页（端口要和 monitor 一致）：
+
+```bash
+node login_web.js https://www.douyin.com --debug-port 9222
+```
+
+另开一个终端启动二维码监听：
+
+```bash
+npm run qr:monitor
+```
+
+常用参数：
+
+```bash
+node qr-monitor-server.js --target-domain douyin.com --port 3999 --debug-port 9222
+```
+
+访问地址：
+
+- `http://127.0.0.1:3999/qr`
+- `GET /api/status`
+- `GET /api/qr/current`
+- `GET /api/qr/image`
+- `GET /api/qr/stream` (SSE)
+- `POST /api/refresh`
+
+## QR Monitor MCP
+
+启动 MCP 服务：
+
+```bash
+npm run mcp:qr
+```
+
+你也可以在 MCP 配置中加入（仓库已提供示例 `mcp_config.json`）：
+
+```json
+{
+  "mcpServers": {
+    "qrMonitor": {
+      "command": "node",
+      "args": ["qr-monitor-mcp-server.js"]
+    }
+  }
+}
+```
+
 ## Output Files
 
 会话文件默认写入：
@@ -77,6 +129,8 @@ PUPPETEER_EXECUTABLE_PATH="/Applications/Google Chrome.app/Contents/MacOS/Google
 - `.web-login-cli/sessions/browser-info.json`
 - `.web-login-cli/sessions/cookies-<domain>.json`
 - `.web-login-cli/sessions/mcp-config.json`
+- `logs/qr-current*.png`（QR Monitor 当前二维码）
+- `logs/qr-<domain>-<port>-<timestamp>.png`（QR Monitor 历史二维码）
 
 ## Bin Command
 

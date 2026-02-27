@@ -9,7 +9,9 @@
   "scripts": {
     "start": "node login_web.js",
     "login:web": "node login_web.js",
-    "check": "node --check login_web.js"
+    "check": "node --check login_web.js && node --check qr-monitor-server.js && node --check qr-monitor-mcp-server.js && node --check src/qr/monitor-core.js && node --check src/mcp/qr-monitor-mcp.js",
+    "qr:monitor": "node qr-monitor-server.js",
+    "mcp:qr": "node qr-monitor-mcp-server.js"
   },
   "keywords": [
     "puppeteer",

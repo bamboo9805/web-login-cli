@@ -4,3 +4,4 @@ node_modules/
 *.log
 sessions/
 .web-login-cli/sessions/
+logs/

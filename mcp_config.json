@@ -1,0 +1,15 @@
+{
+  "mcpServers": {
+    "puppeteer": {
+      "command": "npx",
+      "args": ["-y", "puppeteer-mcp-server"],
+      "env": {
+        "DEBUG_PORT": "9222"
+      }
+    },
+    "qrMonitor": {
+      "command": "node",
+      "args": ["qr-monitor-mcp-server.js"]
+    }
+  }
+}
