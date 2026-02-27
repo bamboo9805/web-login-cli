@@ -20,6 +20,35 @@
 npm install
 ```
 
+## Browser Setup
+
+脚本会优先使用本机已安装的 Chrome（自动探测），如果没有找到则回退到 Puppeteer 默认行为。
+
+也可以显式指定 Chrome 路径：
+
+```bash
+# macOS
+node login_web.js https://www.douyin.com --chrome-path "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
+```
+
+或者使用环境变量：
+
+```bash
+PUPPETEER_EXECUTABLE_PATH="/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" node login_web.js https://www.douyin.com
+```
+
+如果未安装系统 Chrome 且 Puppeteer 也未下载浏览器，可能报错：
+
+```bash
+Could not find Chrome ...
+```
+
+可执行：
+
+```bash
+npx puppeteer browsers install chrome
+```
+
 ## Usage
 
 ```bash
@@ -29,8 +58,14 @@ node login_web.js https://www.instagram.com
 # 指定调试端口
 node login_web.js https://www.instagram.com --debug-port 9222
 
+# 指定本地 Chrome 路径
+node login_web.js https://www.douyin.com --chrome-path "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
+
 # 环境变量方式
 DEBUG_PORT=9333 node login_web.js https://www.douyin.com
+
+# 同时指定系统 Chrome + 调试端口
+PUPPETEER_EXECUTABLE_PATH="/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" DEBUG_PORT=9222 node login_web.js https://www.douyin.com
 ```
 
 登录完成后浏览器会保持打开；按 `Ctrl+C` 关闭。

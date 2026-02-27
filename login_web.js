@@ -13,6 +13,14 @@ const readline = require('readline');
 // Session 存储路径
 const SESSION_DIR = path.join(__dirname, '.web-login-cli', 'sessions');
 const DEFAULT_DEBUG_PORT = Number(process.env.DEBUG_PORT || 9222);
+const LOCAL_CHROME_CANDIDATES = {
+  darwin: ['/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'],
+  win32: [
+    path.join(process.env['PROGRAMFILES'] || 'C:\\Program Files', 'Google\\Chrome\\Application\\chrome.exe'),
+    path.join(process.env['PROGRAMFILES(X86)'] || 'C:\\Program Files (x86)', 'Google\\Chrome\\Application\\chrome.exe'),
+  ],
+  linux: ['/usr/bin/google-chrome', '/usr/bin/google-chrome-stable', '/usr/bin/chromium-browser', '/usr/bin/chromium'],
+};
 
 // 网站配置
 const SITE_CONFIGS = {
@@ -81,13 +89,25 @@ function parsePort(value) {
   return n;
 }
 
+function detectLocalChromeExecutable() {
+  const candidates = LOCAL_CHROME_CANDIDATES[process.platform] || [];
+  for (const executablePath of candidates) {
+    if (executablePath && fs.existsSync(executablePath)) {
+      return executablePath;
+    }
+  }
+  return '';
+}
+
 function printUsage() {
-  console.log('使用方法: node login_web.js <URL> [--debug-port <port>]');
+  console.log('使用方法: node login_web.js <URL> [--debug-port <port>] [--chrome-path <path>]');
   console.log('');
   console.log('示例:');
   console.log('  node login_web.js https://www.instagram.com');
   console.log('  node login_web.js https://www.taobao.com --debug-port 9222');
+  console.log('  node login_web.js https://www.douyin.com --chrome-path "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"');
   console.log('  DEBUG_PORT=9333 node login_web.js https://www.douyin.com');
+  console.log('  PUPPETEER_EXECUTABLE_PATH="/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" node login_web.js https://www.douyin.com');
   console.log('');
   console.log('注意: 登录后浏览器将保持打开状态，以便其他脚本使用');
   console.log('      按 Ctrl+C 关闭浏览器和退出程序\n');
@@ -97,6 +117,7 @@ function parseCliOptions(argv) {
   const options = {
     targetUrl: '',
     debugPort: DEFAULT_DEBUG_PORT,
+    executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || detectLocalChromeExecutable(),
     help: false,
     error: '',
   };
@@ -122,6 +143,16 @@ function parseCliOptions(argv) {
       i += 1;
       continue;
     }
+    if (arg === '--chrome-path' || arg === '--executable-path') {
+      const value = argv[i + 1];
+      if (!value) {
+        options.error = `参数 ${arg} 缺少路径值`;
+        return options;
+      }
+      options.executablePath = value;
+      i += 1;
+      continue;
+    }
     if (arg.startsWith('--debug-port=')) {
       const parsed = parsePort(arg.slice('--debug-port='.length));
       if (!parsed) {
@@ -129,6 +160,24 @@ function parseCliOptions(argv) {
         return options;
       }
       options.debugPort = parsed;
+      continue;
+    }
+    if (arg.startsWith('--chrome-path=')) {
+      const value = arg.slice('--chrome-path='.length).trim();
+      if (!value) {
+        options.error = '参数 --chrome-path 缺少路径值';
+        return options;
+      }
+      options.executablePath = value;
+      continue;
+    }
+    if (arg.startsWith('--executable-path=')) {
+      const value = arg.slice('--executable-path='.length).trim();
+      if (!value) {
+        options.error = '参数 --executable-path 缺少路径值';
+        return options;
+      }
+      options.executablePath = value;
       continue;
     }
     if (arg.startsWith('-')) {
@@ -649,13 +698,22 @@ async function login(targetUrl, options = {}) {
     const domain = extractDomain(targetUrl);
     const config = getSiteConfig(domain);
     const debugPort = parsePort(options.debugPort || DEFAULT_DEBUG_PORT);
+    const executablePath = (options.executablePath || '').trim();
     if (!debugPort) {
       throw new Error(`无效调试端口: ${options.debugPort}`);
+    }
+    if (executablePath && !fs.existsSync(executablePath)) {
+      throw new Error(`浏览器路径不存在: ${executablePath}`);
     }
 
     console.log('\n🌐 启动 Chrome 浏览器...\n');
     console.log(`📍 目标网站: ${domain}`);
     console.log(`🧩 调试端口: ${debugPort}`);
+    if (executablePath) {
+      console.log(`🧭 Chrome 路径: ${executablePath}`);
+    } else {
+      console.log('🧭 Chrome 路径: Puppeteer 默认');
+    }
     if (config.authCookieName) {
       console.log(`🔑 认证 Cookie: ${config.authCookieName}`);
     } else {
@@ -667,6 +725,7 @@ async function login(targetUrl, options = {}) {
     browser = await puppeteer.launch({
       headless: false, // 显示浏览器窗口
       defaultViewport: null,
+      executablePath: executablePath || undefined,
       args: [
         '--no-sandbox',
         '--disable-setuid-sandbox',
@@ -939,7 +998,10 @@ async function main() {
     process.exit(1);
   }
 
-  await login(targetUrl, { debugPort: options.debugPort });
+  await login(targetUrl, {
+    debugPort: options.debugPort,
+    executablePath: options.executablePath,
+  });
 }
 
 // 运行
