@@ -12,6 +12,18 @@
 - 保存浏览器 WebSocket 调试连接信息
 - 生成 MCP 配置示例
 
+## Built-in Site Adapters
+
+以下站点有内置关键词/弹窗/二维码识别优化（仍支持任意 HTTP/HTTPS 站点通用登录）：
+
+- `douyin.com`
+- `jianying.com`
+- `instagram.com`
+- `twitter.com`
+- `github.com`
+- `taobao.com`
+- `ctrip.com`（含 `flights.ctrip.com`）
+
 ## Requirements
 
 - Node.js >= 18
@@ -56,6 +68,12 @@ npx puppeteer browsers install chrome
 ```bash
 # 启动登录
 node login_web.js https://www.instagram.com
+
+# 携程机票（内置扫码登录适配）
+node login_web.js https://flights.ctrip.com
+
+# 淘宝（内置扫码登录适配）
+node login_web.js https://www.taobao.com
 
 # 指定调试端口
 node login_web.js https://www.instagram.com --debug-port 9222

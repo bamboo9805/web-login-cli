@@ -42,7 +42,36 @@ const SITE_CONFIGS = {
     loginButtonKeywords: ['登录', '注册', '开启', '立即开启', '开启创作', '开始创作', '马上体验'],
     qrTabKeywords: ['扫码登录', '二维码登录', '扫码快捷登录', '扫码', '二维码'],
     qrHintKeywords: ['扫码', '二维码', 'qr', 'qrcode', 'scan'],
-  }
+    loginModalSelectors: ['.semi-modal-content', '.semi-modal', '.web-login-dialog'],
+  },
+  'ctrip.com': {
+    authCookieName: 'cticket',
+    loginIndicators: [],
+    loginButtonKeywords: ['登录', '登录/注册', '立即登录', '去登录', '手机扫码登录'],
+    qrTabKeywords: ['扫码登录', '二维码登录', '手机扫码登录', '扫码'],
+    qrHintKeywords: ['扫码', '二维码', 'qr', 'qrcode', 'ctrip', '携程'],
+    loginModalSelectors: ['.pc_login_container', '.lg_loginbox_modal', '.un_login_container'],
+    qrCodeSelectors: [
+      '.pc_login_container img',
+      '.lg_loginbox_modal img',
+      'img[src*="qrcode"]',
+      'canvas[class*="qr"]',
+    ],
+  },
+  'taobao.com': {
+    authCookieName: 'cookie2',
+    loginIndicators: [],
+    loginButtonKeywords: ['登录', '亲，请登录', '请登录', '立即登录', '账户登录'],
+    qrTabKeywords: ['扫码登录', '二维码登录', '手机扫码登录', '扫码'],
+    qrHintKeywords: ['扫码', '二维码', 'qr', 'qrcode', 'taobao', '淘宝', '手机淘宝'],
+    loginModalSelectors: ['.login-content', '.login-box', '.module-static', '.login-panel'],
+    qrCodeSelectors: [
+      '.module-quick img',
+      '.qrcode-login img',
+      'img[src*="qrcode"]',
+      'canvas[class*="qr"]',
+    ],
+  },
 };
 
 const LOGIN_BUTTON_KEYWORDS = [
@@ -200,6 +229,63 @@ function mergeKeywords(primary, fallback) {
   return Array.from(new Set(merged.filter(Boolean)));
 }
 
+async function pickBestQrFromElements(elements) {
+  let best = null;
+  let bestScore = -1;
+
+  for (const candidate of elements) {
+    const meta = await candidate.evaluate((el) => {
+      const rect = el.getBoundingClientRect();
+      const style = window.getComputedStyle(el);
+      const parentText = (el.parentElement?.innerText || '').replace(/\s+/g, ' ').trim().toLowerCase();
+      const src = el.tagName.toLowerCase() === 'img' ? (el.getAttribute('src') || '') : '';
+      return {
+        width: rect.width,
+        height: rect.height,
+        visible: style.display !== 'none' && style.visibility !== 'hidden' && style.opacity !== '0',
+        src,
+        parentText,
+      };
+    });
+
+    if (!meta.visible || meta.width < 120 || meta.height < 120 || meta.width > 380 || meta.height > 380) {
+      await candidate.dispose();
+      continue;
+    }
+
+    const ratio = meta.width / meta.height;
+    if (ratio < 0.8 || ratio > 1.25) {
+      await candidate.dispose();
+      continue;
+    }
+
+    let score = 0;
+    const srcLower = meta.src.toLowerCase();
+    if (meta.src.startsWith('data:image/')) {
+      score += 5;
+    }
+    if (srcLower.includes('qr') || srcLower.includes('qrcode')) {
+      score += 4;
+    }
+    if (meta.parentText.includes('扫码') || meta.parentText.includes('二维码') || meta.parentText.includes('scan')) {
+      score += 3;
+    }
+    score += Math.max(0, 2 - Math.abs(meta.width - meta.height) / 40);
+
+    if (score > bestScore) {
+      if (best) {
+        await best.dispose();
+      }
+      best = candidate;
+      bestScore = score;
+    } else {
+      await candidate.dispose();
+    }
+  }
+
+  return best;
+}
+
 // 确保 session 目录存在
 if (!fs.existsSync(SESSION_DIR)) {
   fs.mkdirSync(SESSION_DIR, { recursive: true });
@@ -295,65 +381,23 @@ async function tryAutoClickLoginButton(page, inputKeywords = LOGIN_BUTTON_KEYWOR
   return clickResult;
 }
 
-async function findQrElement(page) {
-  // Domain-specific first: prefer finding QR inside login popup on Douyin.
-  const douyinModal = await page.$('.douyin_login_new_class');
-  if (douyinModal) {
-    const popupCandidates = await douyinModal.$$('img, canvas');
-    let best = null;
-    let bestScore = -1;
-
-    for (const candidate of popupCandidates) {
-      const meta = await candidate.evaluate((el) => {
-        const rect = el.getBoundingClientRect();
-        const style = window.getComputedStyle(el);
-        const parentText = (el.parentElement?.innerText || '').replace(/\s+/g, ' ').trim().toLowerCase();
-        const src = el.tagName.toLowerCase() === 'img' ? (el.getAttribute('src') || '') : '';
-        return {
-          width: rect.width,
-          height: rect.height,
-          visible: style.display !== 'none' && style.visibility !== 'hidden' && style.opacity !== '0',
-          src,
-          parentText,
-        };
-      });
-
-      if (!meta.visible || meta.width < 120 || meta.height < 120 || meta.width > 360 || meta.height > 360) {
-        continue;
-      }
-
-      const ratio = meta.width / meta.height;
-      if (ratio < 0.8 || ratio > 1.25) {
-        continue;
-      }
-
-      let score = 0;
-      if (meta.src.startsWith('data:image/')) {
-        score += 5;
-      }
-      if (meta.src.toLowerCase().includes('qr') || meta.src.toLowerCase().includes('qrcode')) {
-        score += 4;
-      }
-      if (meta.parentText.includes('扫码') || meta.parentText.includes('二维码') || meta.parentText.includes('scan')) {
-        score += 3;
-      }
-      score += Math.max(0, 2 - Math.abs(meta.width - meta.height) / 40);
-
-      if (score > bestScore) {
-        bestScore = score;
-        best = candidate;
-      } else {
-        await candidate.dispose();
-      }
+async function findQrElement(page, config = {}) {
+  const modalSelectors = Array.from(new Set(['.douyin_login_new_class', ...(config.loginModalSelectors || [])]));
+  for (const selector of modalSelectors) {
+    const modal = await page.$(selector);
+    if (!modal) {
+      continue;
     }
-
-    await douyinModal.dispose();
-    if (best) {
-      return { element: best, source: 'douyin-popup-candidate' };
+    const popupCandidates = await modal.$$('img, canvas');
+    const bestInModal = await pickBestQrFromElements(popupCandidates);
+    await modal.dispose();
+    if (bestInModal) {
+      return { element: bestInModal, source: `modal:${selector}` };
     }
   }
 
-  for (const selector of QR_CODE_SELECTORS) {
+  const qrSelectors = Array.from(new Set([...(config.qrCodeSelectors || []), ...QR_CODE_SELECTORS]));
+  for (const selector of qrSelectors) {
     const element = await page.$(selector);
     if (!element) {
       continue;
@@ -365,6 +409,7 @@ async function findQrElement(page) {
     }
   }
 
+  const containerKeywords = mergeKeywords(config.qrHintKeywords, QR_CONTAINER_KEYWORDS).map((k) => String(k).toLowerCase());
   const qrContainerHandle = await page.evaluateHandle((keywords) => {
     const normalize = (text) => (text || '').replace(/\s+/g, ' ').trim().toLowerCase();
     const isVisible = (el) => {
@@ -396,7 +441,7 @@ async function findQrElement(page) {
     }
 
     return null;
-  }, QR_CONTAINER_KEYWORDS);
+  }, containerKeywords);
 
   const qrContainerElement = qrContainerHandle.asElement();
   if (qrContainerElement) {
@@ -451,10 +496,10 @@ async function trySwitchToQrTab(page, inputKeywords = QR_TAB_KEYWORDS) {
 /**
  * 检测二维码并保存图片
  */
-async function tryCaptureLoginQrCode(page, domain) {
+async function tryCaptureLoginQrCode(page, domain, config = {}) {
   const maxAttempts = 20;
   for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
-    const found = await findQrElement(page);
+    const found = await findQrElement(page, config);
     if (found && found.element) {
       const qrPath = path.join(SESSION_DIR, `login-qr-${toFileSafeDomain(domain)}-${Date.now()}.png`);
       await found.element.screenshot({ path: qrPath });
@@ -516,11 +561,11 @@ async function autoHandleLoginEntry(page, domain, config = {}) {
   console.log('🔍 检测是否出现二维码登录弹窗...');
   let qrResult;
   try {
-    qrResult = await tryCaptureLoginQrCode(page, domain);
+    qrResult = await tryCaptureLoginQrCode(page, domain, config);
   } catch (error) {
     if ((error.message || '').includes('Execution context was destroyed')) {
       await new Promise((resolve) => setTimeout(resolve, 1500));
-      qrResult = await tryCaptureLoginQrCode(page, domain).catch(() => null);
+      qrResult = await tryCaptureLoginQrCode(page, domain, config).catch(() => null);
     } else {
       throw error;
     }

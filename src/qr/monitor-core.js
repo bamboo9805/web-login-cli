@@ -12,12 +12,48 @@ const QR_TAB_KEYWORDS = ['扫码登录', '二维码登录', 'qr login', 'scan lo
 const QR_EXPIRED_KEYWORDS = ['二维码已失效', '已过期', 'expired', '失效'];
 const QR_REFRESH_KEYWORDS = ['刷新', '点击刷新', '重新获取', '重试', 'refresh'];
 const QR_HINT_KEYWORDS = ['扫码', '二维码', 'qr', 'qrcode', 'scan'];
+const LOGIN_MODAL_SELECTORS = ['.douyin_login_new_class'];
+const QR_CODE_SELECTORS = [
+  'img[src*="qrcode"]',
+  'img[src*="qr"]',
+  'img[alt*="二维码"]',
+  'img[alt*="QR"]',
+  'canvas[class*="qr"]',
+  'canvas[id*="qr"]',
+  '[class*="qrcode"] img',
+  '[class*="qr-code"] img',
+  '[data-e2e*="qrcode"] img',
+];
 
 const SITE_KEYWORD_OVERRIDES = {
   'jianying.com': {
     loginButtonKeywords: ['登录', '注册', '开启', '立即开启', '开启创作', '开始创作', '马上体验'],
     qrTabKeywords: ['扫码登录', '二维码登录', '扫码', '二维码', '抖音扫码登录'],
     qrHintKeywords: ['扫码', '二维码', 'qr', 'qrcode', 'scan'],
+  },
+  'ctrip.com': {
+    loginButtonKeywords: ['登录', '登录/注册', '立即登录', '去登录', '手机扫码登录'],
+    qrTabKeywords: ['扫码登录', '二维码登录', '手机扫码登录', '扫码'],
+    qrHintKeywords: ['扫码', '二维码', 'qr', 'qrcode', '携程', 'ctrip'],
+    loginModalSelectors: ['.pc_login_container', '.lg_loginbox_modal', '.un_login_container'],
+    qrCodeSelectors: [
+      '.pc_login_container img',
+      '.lg_loginbox_modal img',
+      'img[src*="qrcode"]',
+      'canvas[class*="qr"]',
+    ],
+  },
+  'taobao.com': {
+    loginButtonKeywords: ['登录', '亲，请登录', '请登录', '立即登录', '账户登录'],
+    qrTabKeywords: ['扫码登录', '二维码登录', '手机扫码登录', '扫码'],
+    qrHintKeywords: ['扫码', '二维码', 'qr', 'qrcode', '淘宝', 'taobao', '手机淘宝'],
+    loginModalSelectors: ['.login-content', '.login-box', '.module-static', '.login-panel'],
+    qrCodeSelectors: [
+      '.module-quick img',
+      '.qrcode-login img',
+      'img[src*="qrcode"]',
+      'canvas[class*="qr"]',
+    ],
   },
 };
 
@@ -52,6 +88,8 @@ function getSiteKeywords(domain) {
         loginButtonKeywords: mergeKeywords(config.loginButtonKeywords, LOGIN_BUTTON_KEYWORDS),
         qrTabKeywords: mergeKeywords(config.qrTabKeywords, QR_TAB_KEYWORDS),
         qrHintKeywords: mergeKeywords(config.qrHintKeywords, QR_HINT_KEYWORDS),
+        loginModalSelectors: mergeKeywords(config.loginModalSelectors, LOGIN_MODAL_SELECTORS),
+        qrCodeSelectors: mergeKeywords(config.qrCodeSelectors, QR_CODE_SELECTORS),
       };
     }
   }
@@ -59,6 +97,8 @@ function getSiteKeywords(domain) {
     loginButtonKeywords: LOGIN_BUTTON_KEYWORDS,
     qrTabKeywords: QR_TAB_KEYWORDS,
     qrHintKeywords: QR_HINT_KEYWORDS,
+    loginModalSelectors: LOGIN_MODAL_SELECTORS,
+    qrCodeSelectors: QR_CODE_SELECTORS,
   };
 }
 
@@ -309,8 +349,12 @@ class QRMonitorSession extends EventEmitter {
   }
 
   async hasLoginModal(page) {
-    const modal = await page.$('.douyin_login_new_class');
-    if (modal) {
+    const selectors = this.siteKeywords.loginModalSelectors || LOGIN_MODAL_SELECTORS;
+    for (const selector of selectors) {
+      const modal = await page.$(selector);
+      if (!modal) {
+        continue;
+      }
       await modal.dispose();
       return true;
     }
@@ -515,6 +559,204 @@ class QRMonitorSession extends EventEmitter {
     }, QR_EXPIRED_KEYWORDS, QR_REFRESH_KEYWORDS, force);
   }
 
+  async tryClickQrIcon(page, force = false) {
+    const target = await page.evaluate((hintKeywords, expiredKeywords, refreshKeywords, forceRefresh) => {
+      const normalize = (text) => (text || '').replace(/\s+/g, ' ').trim().toLowerCase();
+      const hasAny = (text, words) => words.some((w) => text.includes(String(w || '').toLowerCase()));
+      const isVisible = (el) => {
+        const style = window.getComputedStyle(el);
+        const rect = el.getBoundingClientRect();
+        return (
+          style.display !== 'none' &&
+          style.visibility !== 'hidden' &&
+          style.opacity !== '0' &&
+          rect.width > 12 &&
+          rect.height > 12 &&
+          rect.bottom > 0 &&
+          rect.right > 0 &&
+          rect.top < window.innerHeight &&
+          rect.left < window.innerWidth
+        );
+      };
+      const inViewport = (x, y) => (
+        Number.isFinite(x) &&
+        Number.isFinite(y) &&
+        x >= 1 &&
+        y >= 1 &&
+        x <= window.innerWidth - 1 &&
+        y <= window.innerHeight - 1
+      );
+
+      const bodyText = normalize(document.body?.innerText || '');
+      const hasExpiredText = hasAny(bodyText, expiredKeywords);
+      if (!forceRefresh && !hasExpiredText) {
+        return { clicked: false, reason: 'not_expired' };
+      }
+
+      const points = [];
+
+      // 1) 优先找带有“失效/刷新”文案的可点击覆盖层（如抖音二维码失效层）
+      const refreshOverlayNodes = Array.from(document.querySelectorAll('button, a, [role="button"], div, span'))
+        .filter((node) => node instanceof HTMLElement)
+        .map((node) => {
+          const rect = node.getBoundingClientRect();
+          const style = window.getComputedStyle(node);
+          const text = normalize(node.innerText || node.textContent);
+          if (!text) {
+            return null;
+          }
+          if (!isVisible(node)) {
+            return null;
+          }
+          if (rect.width < 40 || rect.height < 20 || rect.width > 460 || rect.height > 460) {
+            return null;
+          }
+          const hasRefresh = hasAny(text, refreshKeywords);
+          const hasExpired = hasAny(text, expiredKeywords);
+          const hasHint = hasAny(text, hintKeywords);
+          if (!hasRefresh && !hasExpired && !hasHint) {
+            return null;
+          }
+
+          let score = 0;
+          if (hasRefresh) score += 9;
+          if (hasExpired) score += 8;
+          if (hasHint) score += 3;
+          if (style.cursor === 'pointer') score += 6;
+          if (node.tagName.toLowerCase() === 'button' || node.tagName.toLowerCase() === 'a') score += 4;
+          if (node.getAttribute('role') === 'button') score += 4;
+          if (Math.abs(rect.width - rect.height) < 24) score += 2;
+          const cx = rect.left + rect.width / 2;
+          const cy = rect.top + rect.height / 2;
+          const dist = Math.hypot(cx - window.innerWidth / 2, cy - window.innerHeight / 2);
+          score += Math.max(0, 4 - dist / 300);
+          if (!inViewport(cx, cy)) {
+            return null;
+          }
+
+          return {
+            x: cx,
+            y: cy,
+            score,
+            text: text.slice(0, 80),
+            reason: hasExpired || hasRefresh ? 'expired_overlay' : 'hint_overlay',
+          };
+        })
+        .filter(Boolean)
+        .sort((a, b) => b.score - a.score)
+        .slice(0, 12);
+
+      points.push(...refreshOverlayNodes);
+
+      // 2) 再找二维码图像区域的中心点，点击其顶部元素（常见是覆盖层）
+      const qrCandidates = Array.from(document.querySelectorAll('img, canvas'))
+        .filter((node) => node instanceof HTMLElement)
+        .map((node) => {
+          const rect = node.getBoundingClientRect();
+          const src = node.tagName.toLowerCase() === 'img' ? (node.getAttribute('src') || '') : '';
+          const parentText = normalize(node.parentElement?.innerText || '');
+          let ancestorText = parentText;
+          let cur = node.parentElement;
+          for (let i = 0; i < 4 && cur; i += 1) {
+            ancestorText += ` ${normalize(cur.innerText || '')}`;
+            cur = cur.parentElement;
+          }
+          return { node, rect, src, parentText, ancestorText };
+        })
+        .filter((item) => {
+          const ratio = item.rect.width / Math.max(1, item.rect.height);
+          return (
+            isVisible(item.node) &&
+            item.rect.width >= 90 &&
+            item.rect.height >= 90 &&
+            item.rect.width <= 460 &&
+            item.rect.height <= 460 &&
+            ratio >= 0.75 &&
+            ratio <= 1.3
+          );
+        })
+        .map((item) => {
+          let score = 0;
+          const srcLower = item.src.toLowerCase();
+          if (item.src.startsWith('data:image/')) {
+            score += 6;
+          }
+          if (srcLower.includes('qr') || srcLower.includes('qrcode')) {
+            score += 4;
+          }
+          if (hasAny(item.parentText, hintKeywords)) {
+            score += 4;
+          }
+          if (hasAny(item.ancestorText, hintKeywords)) {
+            score += 3;
+          }
+          if (hasAny(item.parentText, refreshKeywords) || hasAny(item.ancestorText, refreshKeywords)) {
+            score += 3;
+          }
+          if (hasAny(item.parentText, expiredKeywords) || hasAny(item.ancestorText, expiredKeywords)) {
+            score += 3;
+          }
+          const centerX = window.innerWidth / 2;
+          const centerY = window.innerHeight / 2;
+          const qrCenterX = item.rect.x + item.rect.width / 2;
+          const qrCenterY = item.rect.y + item.rect.height / 2;
+          const dist = Math.hypot(qrCenterX - centerX, qrCenterY - centerY);
+          score += Math.max(0, 3 - dist / 280);
+          const topEl = document.elementFromPoint(qrCenterX, qrCenterY);
+          let extra = 0;
+          if (topEl instanceof HTMLElement) {
+            const topStyle = window.getComputedStyle(topEl);
+            if (topStyle.cursor === 'pointer') extra += 6;
+            const topText = normalize(topEl.innerText || topEl.textContent);
+            if (hasAny(topText, refreshKeywords)) extra += 6;
+            if (hasAny(topText, expiredKeywords)) extra += 5;
+          }
+          return { ...item, score: score + extra, x: qrCenterX, y: qrCenterY };
+        })
+        .sort((a, b) => b.score - a.score)
+        .slice(0, 8);
+
+      for (const item of qrCandidates) {
+        if (!inViewport(item.x, item.y)) {
+          continue;
+        }
+        points.push({
+          x: item.x,
+          y: item.y,
+          score: item.score,
+          text: normalize(item.parentText || '').slice(0, 80),
+          reason: 'qr_center',
+        });
+      }
+
+      points.sort((a, b) => b.score - a.score);
+      const best = points[0];
+      if (!best) {
+        return { clicked: false, reason: hasExpiredText ? 'expired_no_qr_icon' : 'no_qr_icon' };
+      }
+
+      return {
+        clicked: true,
+        x: Math.round(best.x),
+        y: Math.round(best.y),
+        score: best.score,
+        text: best.text || '',
+        reason: best.reason || (forceRefresh ? 'forced_qr_icon' : 'expired_qr_icon'),
+      };
+    }, this.siteKeywords.qrHintKeywords || QR_HINT_KEYWORDS, QR_EXPIRED_KEYWORDS, QR_REFRESH_KEYWORDS, force);
+
+    if (!target || !target.clicked || !Number.isFinite(target.x) || !Number.isFinite(target.y)) {
+      return { clicked: false, reason: target?.reason || 'no_qr_icon' };
+    }
+
+    await page.mouse.click(target.x, target.y, { delay: 60 });
+    return {
+      clicked: true,
+      reason: target.reason || (force ? 'forced_qr_icon' : 'expired_qr_icon'),
+      text: target.text || '',
+    };
+  }
+
   async refreshExpiredQr(page, reason = 'expired_text', force = false) {
     if (!this.canAttemptRefresh(force)) {
       return false;
@@ -526,6 +768,17 @@ class QRMonitorSession extends EventEmitter {
       this.updateState({
         status: 'refreshing_qr',
         message: `Refreshing QR (${reason}): ${refreshResult.text || 'button clicked'}`,
+      });
+      await new Promise((resolve) => setTimeout(resolve, 1000));
+      return true;
+    }
+
+    const iconResult = await this.tryClickQrIcon(page, reason === 'stale_age' || force);
+    if (iconResult.clicked) {
+      this.state.refreshCount += 1;
+      this.updateState({
+        status: 'refreshing_qr',
+        message: `Refreshing QR (${reason}) by clicking QR icon${iconResult.text ? `: ${iconResult.text}` : ''}`,
       });
       await new Promise((resolve) => setTimeout(resolve, 1000));
       return true;
@@ -546,7 +799,10 @@ class QRMonitorSession extends EventEmitter {
   }
 
   async findBestQrElement(page) {
-    const candidates = await page.$$('img, canvas');
+    const selectors = this.siteKeywords.qrCodeSelectors || QR_CODE_SELECTORS;
+    const selectorCandidates = await page.$$(selectors.join(', '));
+    const fallbackCandidates = await page.$$('img, canvas');
+    const candidates = [...selectorCandidates, ...fallbackCandidates];
     let best = null;
     let bestScore = -1;
 
