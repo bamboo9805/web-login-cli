@@ -86,6 +86,36 @@ const SITE_KEYWORD_OVERRIDES = {
     ],
     qrSwitchSelectors: ['.scan-icon', '.J-qr-code-login', '.qrcode-tab', '.qr-tab'],
   },
+  'yuanbao.tencent.com': {
+    loginButtonKeywords: ['登录', '立即登录', '去登录', '账号登录', '腾讯登录', '微信登录'],
+    qrTabKeywords: ['扫码登录', '二维码登录', '微信扫码登录', '扫码'],
+    qrHintKeywords: ['扫码', '二维码', 'qr', 'qrcode', '元宝', '微信'],
+    loginModalSelectors: ['.login-dialog', '.login-modal', '.login-panel', '[class*="login"]'],
+    qrCodeSelectors: [
+      '[class*="qrcode"] img',
+      '[class*="qr-code"] img',
+      '[class*="qr"] img',
+      'img[src*="qrcode"]',
+      'img[src*="qr"]',
+      'canvas[class*="qr"]',
+    ],
+    qrSwitchSelectors: ['.scan-icon', '[class*="scan"]', '[class*="qrcode-tab"]', '[class*="qr-tab"]'],
+  },
+  'doubao.com': {
+    loginButtonKeywords: ['登录', '立即登录', '去登录', '手机号登录', '账号登录', '抖音登录'],
+    qrTabKeywords: ['扫码登录', '二维码登录', '抖音扫码登录', '扫码'],
+    qrHintKeywords: ['扫码', '二维码', 'qr', 'qrcode', '豆包', '抖音'],
+    loginModalSelectors: ['.login-modal', '.semi-modal-content', '.login-dialog', '[class*="login"]'],
+    qrCodeSelectors: [
+      '[class*="qrcode"] img',
+      '[class*="qr-code"] img',
+      '[class*="qr"] img',
+      'img[src*="qrcode"]',
+      'img[src*="qr"]',
+      'canvas[class*="qr"]',
+    ],
+    qrSwitchSelectors: ['.scan-icon', '[class*="scan"]', '[class*="qrcode-tab"]', '[class*="qr-tab"]'],
+  },
 };
 
 function toFileSafeToken(value) {
