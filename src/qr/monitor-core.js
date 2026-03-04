@@ -12,6 +12,7 @@ const QR_TAB_KEYWORDS = ['扫码登录', '二维码登录', 'qr login', 'scan lo
 const QR_EXPIRED_KEYWORDS = ['二维码已失效', '已过期', 'expired', '失效'];
 const QR_REFRESH_KEYWORDS = ['刷新', '点击刷新', '重新获取', '重试', 'refresh'];
 const QR_HINT_KEYWORDS = ['扫码', '二维码', 'qr', 'qrcode', 'scan'];
+const QR_SWITCH_SELECTORS = [];
 const LOGIN_MODAL_SELECTORS = ['.douyin_login_new_class'];
 const QR_CODE_SELECTORS = [
   'img[src*="qrcode"]',
@@ -55,6 +56,36 @@ const SITE_KEYWORD_OVERRIDES = {
       'canvas[class*="qr"]',
     ],
   },
+  'goofish.com': {
+    loginButtonKeywords: ['登录', '请登录', '去登录', '立即登录', '账号登录', '手机扫码登录'],
+    qrTabKeywords: ['扫码登录', '二维码登录', '手机扫码登录', '扫码', '淘宝扫码登录'],
+    qrHintKeywords: ['扫码', '二维码', 'qr', 'qrcode', '闲鱼', 'goofish', '淘宝'],
+    loginModalSelectors: ['.login-content', '.login-box', '.module-static', '.login-panel', '.fish-login-dialog'],
+    qrCodeSelectors: [
+      '.module-quick img',
+      '.qrcode-login img',
+      '[class*="qr"] img',
+      'img[src*="qrcode"]',
+      'canvas[class*="qr"]',
+    ],
+  },
+  'dianping.com': {
+    loginButtonKeywords: ['登录', '登录/注册', '账号登录/注册', '立即登录', '去登录'],
+    qrTabKeywords: ['扫码登录', '二维码登录', 'APP扫码登录', '扫码'],
+    qrHintKeywords: ['扫码', '二维码', 'qr', 'qrcode', '大众点评', 'dianping', '美团'],
+    loginModalSelectors: ['.login-dialog', '.login-form', '.passport-login-container', '.J-login-by-qrcode'],
+    qrCodeSelectors: [
+      '.J-login-by-qrcode .qrcode',
+      '.J-login-by-qrcode [class*="qrcode"]',
+      '.J-login-by-qrcode [class*="qr"]',
+      '.login-form [class*="qrcode"]',
+      '.login-form [class*="qr"]',
+      'img[src*="qrcode"]',
+      'img[src*="showqrcode"]',
+      'canvas[class*="qr"]',
+    ],
+    qrSwitchSelectors: ['.scan-icon', '.J-qr-code-login', '.qrcode-tab', '.qr-tab'],
+  },
 };
 
 function toFileSafeToken(value) {
@@ -90,6 +121,7 @@ function getSiteKeywords(domain) {
         qrHintKeywords: mergeKeywords(config.qrHintKeywords, QR_HINT_KEYWORDS),
         loginModalSelectors: mergeKeywords(config.loginModalSelectors, LOGIN_MODAL_SELECTORS),
         qrCodeSelectors: mergeKeywords(config.qrCodeSelectors, QR_CODE_SELECTORS),
+        qrSwitchSelectors: mergeKeywords(config.qrSwitchSelectors, QR_SWITCH_SELECTORS),
       };
     }
   }
@@ -99,6 +131,7 @@ function getSiteKeywords(domain) {
     qrHintKeywords: QR_HINT_KEYWORDS,
     loginModalSelectors: LOGIN_MODAL_SELECTORS,
     qrCodeSelectors: QR_CODE_SELECTORS,
+    qrSwitchSelectors: QR_SWITCH_SELECTORS,
   };
 }
 
@@ -444,6 +477,48 @@ class QRMonitorSession extends EventEmitter {
     }, keywords);
   }
 
+  async clickBySelectors(page, selectors = []) {
+    if (!selectors.length) {
+      return { clicked: false };
+    }
+    return page.evaluate((selectorList) => {
+      const isVisible = (el) => {
+        const style = window.getComputedStyle(el);
+        const rect = el.getBoundingClientRect();
+        return (
+          style.display !== 'none' &&
+          style.visibility !== 'hidden' &&
+          style.opacity !== '0' &&
+          rect.width > 10 &&
+          rect.height > 10 &&
+          rect.bottom > 0 &&
+          rect.right > 0 &&
+          rect.top < window.innerHeight &&
+          rect.left < window.innerWidth
+        );
+      };
+
+      for (const selector of selectorList) {
+        const nodes = Array.from(document.querySelectorAll(selector));
+        for (const node of nodes) {
+          if (!(node instanceof HTMLElement) || !isVisible(node)) {
+            continue;
+          }
+          node.click();
+          const text = (node.innerText || node.textContent || '').replace(/\s+/g, ' ').trim();
+          return {
+            clicked: true,
+            selector,
+            text: text.slice(0, 80),
+            tag: node.tagName.toLowerCase(),
+          };
+        }
+      }
+
+      return { clicked: false };
+    }, selectors);
+  }
+
   async ensureLoginModalOpen(page) {
     if (await this.hasLoginModal(page)) {
       return true;
@@ -463,13 +538,27 @@ class QRMonitorSession extends EventEmitter {
   }
 
   async ensureQrTab(page) {
-    const switched = await this.clickByKeywords(page, this.siteKeywords.qrTabKeywords);
-    if (switched.clicked) {
-      this.updateState({
-        status: 'waiting_qr',
-        message: `Switched to QR tab: ${switched.text}`,
-      });
-      await new Promise((resolve) => setTimeout(resolve, 800));
+    const contexts = [page, ...page.frames().filter((frame) => frame !== page.mainFrame())];
+    for (const context of contexts) {
+      const bySelector = await this.clickBySelectors(context, this.siteKeywords.qrSwitchSelectors || []).catch(() => ({ clicked: false }));
+      if (bySelector.clicked) {
+        this.updateState({
+          status: 'waiting_qr',
+          message: `Switched to QR tab by selector ${bySelector.selector}${bySelector.text ? `: ${bySelector.text}` : ''}`,
+        });
+        await new Promise((resolve) => setTimeout(resolve, 800));
+        return;
+      }
+
+      const switched = await this.clickByKeywords(context, this.siteKeywords.qrTabKeywords).catch(() => ({ clicked: false }));
+      if (switched.clicked) {
+        this.updateState({
+          status: 'waiting_qr',
+          message: `Switched to QR tab: ${switched.text}`,
+        });
+        await new Promise((resolve) => setTimeout(resolve, 800));
+        return;
+      }
     }
   }
 
@@ -800,85 +889,102 @@ class QRMonitorSession extends EventEmitter {
 
   async findBestQrElement(page) {
     const selectors = this.siteKeywords.qrCodeSelectors || QR_CODE_SELECTORS;
-    const selectorCandidates = await page.$$(selectors.join(', '));
-    const fallbackCandidates = await page.$$('img, canvas');
-    const candidates = [...selectorCandidates, ...fallbackCandidates];
     let best = null;
     let bestScore = -1;
+    const contexts = [page.mainFrame(), ...page.frames().filter((frame) => frame !== page.mainFrame())];
 
-    for (const candidate of candidates) {
-      const meta = await candidate.evaluate((el) => {
-        const rect = el.getBoundingClientRect();
-        const style = window.getComputedStyle(el);
-        const parentText = (el.parentElement?.innerText || '').replace(/\s+/g, ' ').trim().toLowerCase();
-        const src = el.tagName.toLowerCase() === 'img' ? (el.getAttribute('src') || '') : '';
-        return {
-          width: rect.width,
-          height: rect.height,
-          x: rect.x,
-          y: rect.y,
-          viewportW: window.innerWidth,
-          viewportH: window.innerHeight,
-          visible: style.display !== 'none' && style.visibility !== 'hidden' && style.opacity !== '0',
-          src,
-          parentText,
-          ancestorText: (() => {
-            let txt = '';
-            let cur = el.parentElement;
-            for (let i = 0; i < 4 && cur; i += 1) {
-              txt += ` ${cur.innerText || ''}`;
-              cur = cur.parentElement;
-            }
-            return txt.replace(/\s+/g, ' ').trim().toLowerCase();
-          })(),
-          tag: el.tagName.toLowerCase(),
-        };
-      });
+    for (const context of contexts) {
+      const selectorCandidates = await context.$$(selectors.join(', ')).catch(() => []);
+      const fallbackCandidates = await context.$$('img, canvas').catch(() => []);
+      const candidates = [...selectorCandidates, ...fallbackCandidates];
 
-      if (!meta.visible || meta.width < 90 || meta.height < 90 || meta.width > 420 || meta.height > 420) {
-        await candidate.dispose();
-        continue;
-      }
+      for (const candidate of candidates) {
+        const meta = await candidate.evaluate((el) => {
+          const rect = el.getBoundingClientRect();
+          const style = window.getComputedStyle(el);
+          const parentText = (el.parentElement?.innerText || '').replace(/\s+/g, ' ').trim().toLowerCase();
+          const tag = el.tagName.toLowerCase();
+          const src = tag === 'img' ? (el.getAttribute('src') || '') : '';
+          return {
+            width: rect.width,
+            height: rect.height,
+            x: rect.x,
+            y: rect.y,
+            viewportW: window.innerWidth,
+            viewportH: window.innerHeight,
+            visible: style.display !== 'none' && style.visibility !== 'hidden' && style.opacity !== '0',
+            src,
+            cls: ((el.className && String(el.className)) || '').toLowerCase(),
+            id: (el.id || '').toLowerCase(),
+            bg: (style.backgroundImage || '').toLowerCase(),
+            parentText,
+            ancestorText: (() => {
+              let txt = '';
+              let cur = el.parentElement;
+              for (let i = 0; i < 4 && cur; i += 1) {
+                txt += ` ${cur.innerText || ''}`;
+                cur = cur.parentElement;
+              }
+              return txt.replace(/\s+/g, ' ').trim().toLowerCase();
+            })(),
+            tag,
+          };
+        });
 
-      const ratio = meta.width / meta.height;
-      if (ratio < 0.8 || ratio > 1.25) {
-        await candidate.dispose();
-        continue;
-      }
-
-      let score = 0;
-      if (meta.src.startsWith('data:image/')) {
-        score += 6;
-      }
-      if (meta.src.toLowerCase().includes('qr') || meta.src.toLowerCase().includes('qrcode')) {
-        score += 4;
-      }
-      if (this.siteKeywords.qrHintKeywords.some((k) => meta.parentText.includes(k))) {
-        score += 3;
-      }
-      if (this.siteKeywords.qrHintKeywords.some((k) => meta.ancestorText.includes(k))) {
-        score += 2;
-      }
-      if (meta.tag === 'canvas') {
-        score += 2;
-      }
-
-      const centerX = meta.viewportW / 2;
-      const centerY = meta.viewportH / 2;
-      const qrCenterX = meta.x + meta.width / 2;
-      const qrCenterY = meta.y + meta.height / 2;
-      const dist = Math.hypot(qrCenterX - centerX, qrCenterY - centerY);
-      score += Math.max(0, 3 - dist / 260);
-      score += Math.max(0, 2 - Math.abs(meta.width - meta.height) / 40);
-
-      if (score > bestScore) {
-        if (best) {
-          await best.dispose();
+        if (!meta.visible || meta.width < 90 || meta.height < 90 || meta.width > 420 || meta.height > 420) {
+          await candidate.dispose();
+          continue;
         }
-        best = candidate;
-        bestScore = score;
-      } else {
-        await candidate.dispose();
+
+        const ratio = meta.width / meta.height;
+        if (ratio < 0.8 || ratio > 1.25) {
+          await candidate.dispose();
+          continue;
+        }
+
+        let score = 0;
+        if (meta.src.startsWith('data:image/')) {
+          score += 6;
+        }
+        if (meta.src.toLowerCase().includes('qr') || meta.src.toLowerCase().includes('qrcode')) {
+          score += 4;
+        }
+        if (meta.cls.includes('qr') || meta.cls.includes('qrcode') || meta.cls.includes('scan')) {
+          score += 4;
+        }
+        if (meta.id.includes('qr') || meta.id.includes('qrcode') || meta.id.includes('scan')) {
+          score += 3;
+        }
+        if (meta.bg.includes('data:image') || meta.bg.includes('qr') || meta.bg.includes('qrcode')) {
+          score += 5;
+        }
+        if (this.siteKeywords.qrHintKeywords.some((k) => meta.parentText.includes(k))) {
+          score += 3;
+        }
+        if (this.siteKeywords.qrHintKeywords.some((k) => meta.ancestorText.includes(k))) {
+          score += 2;
+        }
+        if (meta.tag === 'canvas') {
+          score += 2;
+        }
+
+        const centerX = meta.viewportW / 2;
+        const centerY = meta.viewportH / 2;
+        const qrCenterX = meta.x + meta.width / 2;
+        const qrCenterY = meta.y + meta.height / 2;
+        const dist = Math.hypot(qrCenterX - centerX, qrCenterY - centerY);
+        score += Math.max(0, 3 - dist / 260);
+        score += Math.max(0, 2 - Math.abs(meta.width - meta.height) / 40);
+
+        if (score > bestScore) {
+          if (best) {
+            await best.dispose();
+          }
+          best = candidate;
+          bestScore = score;
+        } else {
+          await candidate.dispose();
+        }
       }
     }
 

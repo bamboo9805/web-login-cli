@@ -72,6 +72,40 @@ const SITE_CONFIGS = {
       'canvas[class*="qr"]',
     ],
   },
+  'goofish.com': {
+    authCookieName: 'cookie2',
+    loginIndicators: [],
+    loginButtonKeywords: ['登录', '请登录', '去登录', '立即登录', '账号登录', '手机扫码登录'],
+    qrTabKeywords: ['扫码登录', '二维码登录', '手机扫码登录', '扫码', '淘宝扫码登录'],
+    qrHintKeywords: ['扫码', '二维码', 'qr', 'qrcode', 'goofish', '闲鱼', '淘宝'],
+    loginModalSelectors: ['.login-content', '.login-box', '.module-static', '.login-panel', '.fish-login-dialog'],
+    qrCodeSelectors: [
+      '.module-quick img',
+      '.qrcode-login img',
+      '[class*="qr"] img',
+      'img[src*="qrcode"]',
+      'canvas[class*="qr"]',
+    ],
+  },
+  'dianping.com': {
+    authCookieName: null,
+    loginIndicators: [],
+    loginButtonKeywords: ['登录', '登录/注册', '账号登录/注册', '立即登录', '去登录'],
+    qrTabKeywords: ['扫码登录', '二维码登录', 'APP扫码登录', '扫码'],
+    qrHintKeywords: ['扫码', '二维码', 'qr', 'qrcode', 'dianping', '大众点评', '美团'],
+    loginModalSelectors: ['.login-dialog', '.login-form', '.passport-login-container', '.J-login-by-qrcode'],
+    qrCodeSelectors: [
+      '.J-login-by-qrcode .qrcode',
+      '.J-login-by-qrcode [class*="qrcode"]',
+      '.J-login-by-qrcode [class*="qr"]',
+      '.login-form [class*="qrcode"]',
+      '.login-form [class*="qr"]',
+      'img[src*="qrcode"]',
+      'img[src*="showqrcode"]',
+      'canvas[class*="qr"]',
+    ],
+    qrSwitchSelectors: ['.scan-icon', '.J-qr-code-login', '.qrcode-tab', '.qr-tab'],
+  },
 };
 
 const LOGIN_BUTTON_KEYWORDS = [
@@ -238,13 +272,21 @@ async function pickBestQrFromElements(elements) {
       const rect = el.getBoundingClientRect();
       const style = window.getComputedStyle(el);
       const parentText = (el.parentElement?.innerText || '').replace(/\s+/g, ' ').trim().toLowerCase();
-      const src = el.tagName.toLowerCase() === 'img' ? (el.getAttribute('src') || '') : '';
+      const tag = el.tagName.toLowerCase();
+      const src = tag === 'img' ? (el.getAttribute('src') || '') : '';
+      const cls = ((el.className && String(el.className)) || '').toLowerCase();
+      const id = (el.id || '').toLowerCase();
+      const bg = (style.backgroundImage || '').toLowerCase();
       return {
+        tag,
         width: rect.width,
         height: rect.height,
         visible: style.display !== 'none' && style.visibility !== 'hidden' && style.opacity !== '0',
         src,
         parentText,
+        cls,
+        id,
+        bg,
       };
     });
 
@@ -267,8 +309,20 @@ async function pickBestQrFromElements(elements) {
     if (srcLower.includes('qr') || srcLower.includes('qrcode')) {
       score += 4;
     }
+    if (meta.cls.includes('qr') || meta.cls.includes('qrcode') || meta.cls.includes('scan')) {
+      score += 4;
+    }
+    if (meta.id.includes('qr') || meta.id.includes('qrcode') || meta.id.includes('scan')) {
+      score += 3;
+    }
+    if (meta.bg.includes('data:image') || meta.bg.includes('qr') || meta.bg.includes('qrcode')) {
+      score += 5;
+    }
     if (meta.parentText.includes('扫码') || meta.parentText.includes('二维码') || meta.parentText.includes('scan')) {
       score += 3;
+    }
+    if (meta.tag === 'canvas') {
+      score += 2;
     }
     score += Math.max(0, 2 - Math.abs(meta.width - meta.height) / 40);
 
@@ -284,6 +338,18 @@ async function pickBestQrFromElements(elements) {
   }
 
   return best;
+}
+
+function getSearchContexts(page) {
+  const contexts = [{ context: page, label: 'page' }];
+  const mainFrame = page.mainFrame();
+  for (const frame of page.frames()) {
+    if (frame === mainFrame) {
+      continue;
+    }
+    contexts.push({ context: frame, label: `frame:${frame.url().slice(0, 80) || 'unknown'}` });
+  }
+  return contexts;
 }
 
 // 确保 session 目录存在
@@ -381,14 +447,14 @@ async function tryAutoClickLoginButton(page, inputKeywords = LOGIN_BUTTON_KEYWOR
   return clickResult;
 }
 
-async function findQrElement(page, config = {}) {
+async function findQrElementInContext(context, config = {}) {
   const modalSelectors = Array.from(new Set(['.douyin_login_new_class', ...(config.loginModalSelectors || [])]));
   for (const selector of modalSelectors) {
-    const modal = await page.$(selector);
+    const modal = await context.$(selector);
     if (!modal) {
       continue;
     }
-    const popupCandidates = await modal.$$('img, canvas');
+    const popupCandidates = await modal.$$('img, canvas, [class*="qr"], [id*="qr"], [class*="scan"], [id*="scan"]');
     const bestInModal = await pickBestQrFromElements(popupCandidates);
     await modal.dispose();
     if (bestInModal) {
@@ -398,7 +464,7 @@ async function findQrElement(page, config = {}) {
 
   const qrSelectors = Array.from(new Set([...(config.qrCodeSelectors || []), ...QR_CODE_SELECTORS]));
   for (const selector of qrSelectors) {
-    const element = await page.$(selector);
+    const element = await context.$(selector);
     if (!element) {
       continue;
     }
@@ -410,7 +476,7 @@ async function findQrElement(page, config = {}) {
   }
 
   const containerKeywords = mergeKeywords(config.qrHintKeywords, QR_CONTAINER_KEYWORDS).map((k) => String(k).toLowerCase());
-  const qrContainerHandle = await page.evaluateHandle((keywords) => {
+  const qrContainerHandle = await context.evaluateHandle((keywords) => {
     const normalize = (text) => (text || '').replace(/\s+/g, ' ').trim().toLowerCase();
     const isVisible = (el) => {
       const style = window.getComputedStyle(el);
@@ -440,6 +506,22 @@ async function findQrElement(page, config = {}) {
       }
     }
 
+    const qrBlocks = Array.from(document.querySelectorAll('[class*="qr"], [id*="qr"], [class*="scan"], [id*="scan"]'));
+    for (const block of qrBlocks) {
+      if (!(block instanceof HTMLElement) || !isVisible(block)) {
+        continue;
+      }
+      const rect = block.getBoundingClientRect();
+      const ratio = rect.width / Math.max(1, rect.height);
+      if (rect.width < 80 || rect.height < 80 || rect.width > 460 || rect.height > 460) {
+        continue;
+      }
+      if (ratio < 0.7 || ratio > 1.35) {
+        continue;
+      }
+      return block;
+    }
+
     return null;
   }, containerKeywords);
 
@@ -452,9 +534,20 @@ async function findQrElement(page, config = {}) {
   return null;
 }
 
-async function trySwitchToQrTab(page, inputKeywords = QR_TAB_KEYWORDS) {
+async function findQrElement(page, config = {}) {
+  const contexts = getSearchContexts(page);
+  for (const item of contexts) {
+    const found = await findQrElementInContext(item.context, config).catch(() => null);
+    if (found?.element) {
+      return { element: found.element, source: `${item.label}:${found.source}` };
+    }
+  }
+  return null;
+}
+
+async function trySwitchToQrTabInContext(context, inputKeywords = QR_TAB_KEYWORDS) {
   const keywords = inputKeywords.map((keyword) => keyword.toLowerCase());
-  const result = await page.evaluate((needles) => {
+  const result = await context.evaluate((needles) => {
     const normalize = (text) => (text || '').replace(/\s+/g, ' ').trim().toLowerCase();
     const isVisible = (el) => {
       const style = window.getComputedStyle(el);
@@ -493,6 +586,59 @@ async function trySwitchToQrTab(page, inputKeywords = QR_TAB_KEYWORDS) {
   return result;
 }
 
+async function trySwitchToQrBySelectorsInContext(context, selectors = []) {
+  if (!selectors.length) {
+    return { switched: false };
+  }
+  const result = await context.evaluate((selectorList) => {
+    const isVisible = (el) => {
+      const style = window.getComputedStyle(el);
+      const rect = el.getBoundingClientRect();
+      return (
+        style.display !== 'none' &&
+        style.visibility !== 'hidden' &&
+        style.opacity !== '0' &&
+        rect.width > 10 &&
+        rect.height > 10 &&
+        rect.bottom > 0 &&
+        rect.right > 0 &&
+        rect.top < window.innerHeight &&
+        rect.left < window.innerWidth
+      );
+    };
+
+    for (const selector of selectorList) {
+      const nodes = Array.from(document.querySelectorAll(selector));
+      for (const node of nodes) {
+        if (!(node instanceof HTMLElement) || !isVisible(node)) {
+          continue;
+        }
+        node.click();
+        const text = (node.innerText || node.textContent || '').replace(/\s+/g, ' ').trim();
+        return { switched: true, text: text.slice(0, 80), selector };
+      }
+    }
+    return { switched: false };
+  }, selectors);
+  return result;
+}
+
+async function trySwitchToQrTab(page, inputKeywords = QR_TAB_KEYWORDS, switchSelectors = []) {
+  const contexts = getSearchContexts(page);
+  for (const item of contexts) {
+    const bySelector = await trySwitchToQrBySelectorsInContext(item.context, switchSelectors).catch(() => ({ switched: false }));
+    if (bySelector && bySelector.switched) {
+      return { ...bySelector, source: item.label };
+    }
+
+    const result = await trySwitchToQrTabInContext(item.context, inputKeywords).catch(() => ({ switched: false }));
+    if (result && result.switched) {
+      return { ...result, source: item.label };
+    }
+  }
+  return { switched: false };
+}
+
 /**
  * 检测二维码并保存图片
  */
@@ -517,6 +663,7 @@ async function tryCaptureLoginQrCode(page, domain, config = {}) {
 async function autoHandleLoginEntry(page, domain, config = {}) {
   const loginKeywords = mergeKeywords(config.loginButtonKeywords, LOGIN_BUTTON_KEYWORDS);
   const qrTabKeywords = mergeKeywords(config.qrTabKeywords, QR_TAB_KEYWORDS);
+  const qrSwitchSelectors = config.qrSwitchSelectors || [];
 
   console.log('🤖 尝试自动点击登录按钮...');
   const clickResult = await tryAutoClickLoginButton(page, loginKeywords);
@@ -544,11 +691,11 @@ async function autoHandleLoginEntry(page, domain, config = {}) {
 
   let switched;
   try {
-    switched = await trySwitchToQrTab(page, qrTabKeywords);
+    switched = await trySwitchToQrTab(page, qrTabKeywords, qrSwitchSelectors);
   } catch (error) {
     if ((error.message || '').includes('Execution context was destroyed')) {
       await new Promise((resolve) => setTimeout(resolve, 1500));
-      switched = await trySwitchToQrTab(page, qrTabKeywords).catch(() => ({ switched: false }));
+      switched = await trySwitchToQrTab(page, qrTabKeywords, qrSwitchSelectors).catch(() => ({ switched: false }));
     } else {
       throw error;
     }

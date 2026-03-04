@@ -22,6 +22,8 @@
 - `twitter.com`
 - `github.com`
 - `taobao.com`
+- `goofish.com`
+- `dianping.com`
 - `ctrip.com`（含 `flights.ctrip.com`）
 
 ## Requirements
@@ -74,6 +76,12 @@ node login_web.js https://flights.ctrip.com
 
 # 淘宝（内置扫码登录适配）
 node login_web.js https://www.taobao.com
+
+# 闲鱼（内置扫码登录适配）
+node login_web.js https://www.goofish.com/
+
+# 大众点评（内置扫码登录适配）
+node login_web.js https://account.dianping.com/pclogin
 
 # 指定调试端口
 node login_web.js https://www.instagram.com --debug-port 9222
