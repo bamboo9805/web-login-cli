@@ -5,6 +5,31 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>QR 快速登录面板</title>
   <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    .status-waiting { color: #f59e0b; }
+    .status-refreshing { color: #d97706; }
+    .status-ready { color: #10b981; }
+    .status-logged-in { color: #059669; }
+    .status-error { color: #dc2626; }
+    
+    .qr-fade-in {
+      animation: fadeIn 0.3s ease-in;
+    }
+    
+    @keyframes fadeIn {
+      from { opacity: 0; }
+      to { opacity: 1; }
+    }
+    
+    .pulse {
+      animation: pulse 2s infinite;
+    }
+    
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.5; }
+    }
+  </style>
 </head>
 <body class="min-h-screen bg-slate-950 text-slate-100">
   <div class="mx-auto flex min-h-screen max-w-5xl flex-col px-4 py-8 sm:px-6 lg:px-8">
@@ -12,20 +37,9 @@
       <div>
         <p class="text-sm uppercase tracking-[0.2em] text-cyan-300">QR Quick Login</p>
         <h1 class="mt-2 text-3xl font-semibold text-white">当前站点：<span id="currentDomain">-</span></h1>
-        <p id="targetUrl" class="mt-2 text-sm text-slate-400"></p>
+        <p id="connectionStatus" class="mt-2 text-sm text-slate-400">未连接</p>
+        <p id="lastUpdate" class="mt-1 text-xs text-slate-500"></p>
       </div>
-      <form id="domainForm" class="flex w-full flex-col gap-3 sm:w-auto sm:min-w-[360px] sm:flex-row">
-        <input
-          id="domainInput"
-          type="text"
-          placeholder="输入域名，例如 jd.com"
-          class="w-full rounded-2xl border border-white/10 bg-slate-900/80 px-4 py-3 text-base text-white outline-none ring-0 placeholder:text-slate-500 focus:border-cyan-400"
-        />
-        <button
-          type="submit"
-          class="rounded-2xl bg-cyan-500 px-5 py-3 font-medium text-slate-950 transition hover:bg-cyan-400"
-        >切换站点</button>
-      </form>
     </header>
 
     <main class="grid flex-1 gap-6 lg:grid-cols-[1.3fr_0.9fr]">
@@ -33,12 +47,17 @@
         <div class="flex items-center justify-between">
           <div>
             <h2 class="text-xl font-semibold text-white">登录二维码</h2>
-            <p class="mt-1 text-sm text-slate-400">二维码会通过 SSE 实时更新，前端也会每 5 秒做一次状态同步。</p>
+            <p class="mt-1 text-sm text-slate-400">
+              二维码会通过 SSE 实时更新。<br/>
+              <span id="autoRefreshInfo">每 5 秒自动刷新一次。</span>
+            </p>
           </div>
           <button
             id="refreshButton"
             type="button"
-            class="rounded-2xl border border-cyan-400/40 bg-cyan-400/10 px-4 py-2 text-sm font-medium text-cyan-200 transition hover:border-cyan-300 hover:bg-cyan-400/20"
+            class="rounded-2xl border border-cyan-400/40 bg-cyan-400/10 px-4 py-2 text-sm font-medium text-cyan-200 transition hover:border-cyan-300 hover:bg-cyan-400/20 disabled:disabled"
+            onclick="manualRefresh()"
+            disabled
           >手动刷新</button>
         </div>
 
@@ -46,249 +65,276 @@
           <img id="qrImage" alt="登录二维码" class="hidden max-h-[360px] max-w-full rounded-2xl bg-white p-4 shadow-lg" />
           <div id="qrPlaceholder" class="text-center text-slate-400">
             <div class="mx-auto flex h-16 w-16 items-center justify-center rounded-full border border-white/10 bg-white/5 text-2xl">⌛</div>
-            <p class="mt-4 text-lg text-slate-200">正在准备二维码</p>
-            <p class="mt-2 text-sm text-slate-500">如果浏览器尚未打开，首次加载可能需要几秒钟。</p>
+            <p id="qrStatusText" class="mt-4 text-lg text-slate-200">正在准备二维码...</p>
+            <p id="debugInfo" class="mt-2 text-sm text-slate-500"></p>
           </div>
         </div>
       </section>
 
-      <aside class="flex flex-col gap-6">
-        <section class="rounded-3xl border border-white/10 bg-white/5 p-6 shadow-2xl shadow-black/20 backdrop-blur">
-          <div class="flex items-center justify-between gap-3">
-            <h2 class="text-xl font-semibold text-white">登录状态</h2>
-            <span id="statusBadge" class="rounded-full border border-amber-400/30 bg-amber-400/10 px-3 py-1 text-sm font-medium text-amber-200">等待中</span>
-          </div>
-          <p id="statusMessage" class="mt-4 text-sm leading-6 text-slate-300">正在连接二维码监控服务...</p>
-          <div class="mt-5 space-y-3 text-sm text-slate-400">
-            <div class="flex justify-between gap-4"><span>连接状态</span><span id="connectedValue">-</span></div>
-            <div class="flex justify-between gap-4"><span>更新时间</span><span id="lastUpdateValue">-</span></div>
-            <div class="flex justify-between gap-4"><span>二维码年龄</span><span id="qrAgeValue">-</span></div>
-            <div class="flex justify-between gap-4"><span>刷新次数</span><span id="refreshCountValue">0</span></div>
-          </div>
-        </section>
+      <section class="rounded-3xl border border-white/10 bg-white/5 p-6 shadow-2xl">
+        <form id="domainForm" class="flex w-full flex-col gap-3 sm:w-auto sm:min-w-[360px] sm:flex-row">
+          <input
+            id="domainInput"
+            type="text"
+            placeholder="输入域名，例如 jd.com、zhihu.com、bilibili.com"
+            value="jd.com"
+            class="w-full rounded-2xl border border-white/10 bg-slate-900/80 px-4 py-3 text-base text-white outline-none ring-0 placeholder:text-slate-500 focus:border-cyan-400"
+          />
+          <button
+            type="submit"
+            class="rounded-2xl bg-cyan-500 px-5 py-3 font-medium text-slate-950 transition hover:bg-cyan-400"
+            onclick="switchDomain()"
+          >切换站点</button>
+        </form>
 
-        <section class="rounded-3xl border border-white/10 bg-white/5 p-6 shadow-2xl shadow-black/20 backdrop-blur">
-          <h2 class="text-xl font-semibold text-white">会话信息</h2>
-          <div class="mt-4 space-y-3 text-sm text-slate-400">
-            <div class="flex justify-between gap-4"><span>Debug Port</span><span id="debugPortValue">-</span></div>
-            <div class="flex justify-between gap-4"><span>Monitor Port</span><span id="monitorPortValue">-</span></div>
-            <div class="flex justify-between gap-4"><span>Page URL</span><span id="pageUrlValue" class="max-w-[220px] truncate text-right">-</span></div>
-            <div class="flex justify-between gap-4"><span>过期时间</span><span id="expiresAtValue">-</span></div>
-          </div>
-          <div id="errorBox" class="mt-5 hidden rounded-2xl border border-rose-400/30 bg-rose-400/10 px-4 py-3 text-sm text-rose-200"></div>
-        </section>
-      </aside>
+        <div id="debugInfo" class="mt-4 text-sm text-slate-500 space-y-2">
+          <p>💡 提示：</p>
+          <p>• 支持的站点：jd.com, zhihu.com, bilibili.com</p>
+          <p>• 二维码会自动更新，也可以手动刷新</p>
+          <p>• SSE 连接后状态会实时显示</p>
+        </div>
+      </section>
     </main>
-  </div>
 
-  <script>
-    const statusStyles = {
-      waiting: 'border-amber-400/30 bg-amber-400/10 text-amber-200',
-      scanned: 'border-sky-400/30 bg-sky-400/10 text-sky-200',
-      logged_in: 'border-emerald-400/30 bg-emerald-400/10 text-emerald-200',
-      timeout: 'border-rose-400/30 bg-rose-400/10 text-rose-200',
-    };
-
-    const state = {
-      domain: getDomainFromPath(),
-      eventSource: null,
-      reconnectTimer: null,
-      pollTimer: null,
-    };
-
-    const elements = {
-      currentDomain: document.getElementById('currentDomain'),
-      targetUrl: document.getElementById('targetUrl'),
-      domainForm: document.getElementById('domainForm'),
-      domainInput: document.getElementById('domainInput'),
-      qrImage: document.getElementById('qrImage'),
-      qrPlaceholder: document.getElementById('qrPlaceholder'),
-      refreshButton: document.getElementById('refreshButton'),
-      statusBadge: document.getElementById('statusBadge'),
-      statusMessage: document.getElementById('statusMessage'),
-      connectedValue: document.getElementById('connectedValue'),
-      lastUpdateValue: document.getElementById('lastUpdateValue'),
-      qrAgeValue: document.getElementById('qrAgeValue'),
-      refreshCountValue: document.getElementById('refreshCountValue'),
-      debugPortValue: document.getElementById('debugPortValue'),
-      monitorPortValue: document.getElementById('monitorPortValue'),
-      pageUrlValue: document.getElementById('pageUrlValue'),
-      expiresAtValue: document.getElementById('expiresAtValue'),
-      errorBox: document.getElementById('errorBox'),
-    };
-
-    function getDomainFromPath() {
-      const parts = window.location.pathname.split('/').filter(Boolean);
-      return decodeURIComponent(parts[1] || 'jd.com');
-    }
-
-    function formatDate(value) {
-      if (!value) {
-        return '-';
-      }
-      const date = new Date(value);
-      if (Number.isNaN(date.getTime())) {
-        return '-';
-      }
-      return date.toLocaleString();
-    }
-
-    function updateHeader(domain) {
-      document.title = `QR 快速登录 - ${domain}`;
-      elements.currentDomain.textContent = domain;
-      elements.domainInput.value = domain;
-    }
-
-    function setStatusBadge(status) {
-      const style = statusStyles[status] || statusStyles.waiting;
-      elements.statusBadge.className = `rounded-full border px-3 py-1 text-sm font-medium ${style}`;
-      elements.statusBadge.textContent = {
-        waiting: '等待扫码',
-        scanned: '已扫码待确认',
-        logged_in: '登录成功',
-        timeout: '会话超时',
-      }[status] || '等待中';
-    }
-
-    function renderPayload(payload) {
-      if (!payload) {
-        return;
-      }
-      updateHeader(payload.domain || state.domain);
-      elements.targetUrl.textContent = payload.targetUrl || '';
-      setStatusBadge(payload.loginStatus || 'waiting');
-      elements.statusMessage.textContent = payload.message || '等待二维码...';
-      elements.connectedValue.textContent = payload.connected ? '已连接' : '未连接';
-      elements.lastUpdateValue.textContent = formatDate(payload.lastUpdateAt);
-      elements.qrAgeValue.textContent = typeof payload.qrAgeSec === 'number' ? `${payload.qrAgeSec}s` : '-';
-      elements.refreshCountValue.textContent = String(payload.refreshCount || 0);
-      elements.debugPortValue.textContent = payload.debugPort || '-';
-      elements.monitorPortValue.textContent = payload.monitorPort || '-';
-      elements.pageUrlValue.textContent = payload.pageUrl || '-';
-      elements.pageUrlValue.title = payload.pageUrl || '';
-      elements.expiresAtValue.textContent = formatDate(payload.expiresAt);
-
-      if (payload.qrDataUrl) {
-        elements.qrImage.src = payload.qrDataUrl;
-        elements.qrImage.classList.remove('hidden');
-        elements.qrPlaceholder.classList.add('hidden');
-      } else {
-        elements.qrImage.classList.add('hidden');
-        elements.qrPlaceholder.classList.remove('hidden');
-      }
-
-      if (payload.lastError) {
-        elements.errorBox.textContent = payload.lastError;
-        elements.errorBox.classList.remove('hidden');
-      } else {
-        elements.errorBox.classList.add('hidden');
-        elements.errorBox.textContent = '';
-      }
-    }
-
-    async function fetchJson(url, options = {}) {
-      const response = await fetch(url, options);
-      const payload = await response.json().catch(() => ({}));
-      if (!response.ok) {
-        throw new Error(payload.error || `Request failed: ${response.status}`);
-      }
-      return payload;
-    }
-
-    async function syncSnapshot() {
-      const payload = await fetchJson(`/api/qr/${encodeURIComponent(state.domain)}`);
-      renderPayload(payload);
-    }
-
-    async function refreshQr() {
-      elements.refreshButton.disabled = true;
-      elements.refreshButton.textContent = '刷新中...';
-      try {
-        const payload = await fetchJson(`/api/qr/${encodeURIComponent(state.domain)}/refresh`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-        });
-        renderPayload(payload);
-      } catch (error) {
-        elements.errorBox.textContent = error.message || String(error);
-        elements.errorBox.classList.remove('hidden');
-      } finally {
-        elements.refreshButton.disabled = false;
-        elements.refreshButton.textContent = '手动刷新';
-      }
-    }
-
-    function clearConnection() {
-      if (state.eventSource) {
-        state.eventSource.close();
-        state.eventSource = null;
-      }
-      if (state.reconnectTimer) {
-        clearTimeout(state.reconnectTimer);
-        state.reconnectTimer = null;
-      }
-    }
-
-    function connectEvents() {
-      clearConnection();
-      const source = new EventSource(`/events?domain=${encodeURIComponent(state.domain)}`);
-      state.eventSource = source;
-
-      source.addEventListener('qr_updated', (event) => {
-        renderPayload(JSON.parse(event.data));
-      });
-
-      source.addEventListener('login_status', (event) => {
-        const payload = JSON.parse(event.data);
-        renderPayload(payload);
-        if (payload.loginStatus === 'timeout') {
-          source.close();
-          state.reconnectTimer = setTimeout(() => {
-            connectEvents();
-            syncSnapshot().catch(() => {});
-          }, 1200);
+    <script>
+      // 配置
+      const API_BASE = window.location.origin;
+      let currentDomain = 'jd.com';
+      let eventSource = null;
+      let currentStatus = 'disconnected';
+      
+      // UI 元素
+      const domainInput = document.getElementById('domainInput');
+      const currentDomainEl = document.getElementById('currentDomain');
+      const connectionStatusEl = document.getElementById('connectionStatus');
+      const lastUpdateEl = document.getElementById('lastUpdate');
+      const qrImage = document.getElementById('qrImage');
+      const qrPlaceholder = document.getElementById('qrPlaceholder');
+      const qrStatusText = document.getElementById('qrStatusText');
+      const refreshButton = document.getElementById('refreshButton');
+      const debugInfoEl = document.getElementById('debugInfo');
+      const autoRefreshInfo = document.getElementById('autoRefreshInfo');
+      
+      // 状态更新
+      function updateStatus(status, message = '') {
+        currentStatus = status;
+        
+        // 状态文本
+        switch (status) {
+          case 'disconnected':
+            connectionStatusEl.textContent = '未连接';
+            connectionStatusEl.className = 'mt-2 text-sm text-slate-500 status-error';
+            qrStatusText.textContent = '请先切换站点';
+            refreshButton.disabled = false;
+            qrImage.classList.add('hidden');
+            qrPlaceholder.classList.remove('hidden');
+            break;
+          case 'connecting':
+            connectionStatusEl.textContent = '正在连接...';
+            connectionStatusEl.className = 'mt-2 text-sm text-slate-500 status-refreshing';
+            qrStatusText.textContent = '正在初始化浏览器...';
+            refreshButton.disabled = true;
+            break;
+          case 'waiting_qr':
+            connectionStatusEl.textContent = '已连接 - 等待二维码';
+            connectionStatusEl.className = 'mt-2 text-sm text-slate-400';
+            qrStatusText.textContent = '正在获取登录二维码...';
+            qrImage.classList.add('hidden');
+            qrPlaceholder.classList.remove('hidden');
+            refreshButton.disabled = false;
+            break;
+          case 'qr_ready':
+            connectionStatusEl.textContent = '已连接 - 二维码就绪';
+            connectionStatusEl.className = 'mt-2 text-sm text-slate-400';
+            qrStatusText.textContent = '二维码已准备好';
+            refreshButton.disabled = false;
+            break;
+          case 'logged_in':
+            connectionStatusEl.textContent = '已连接 - 登录成功';
+            connectionStatusEl.className = 'mt-2 text-sm text-slate-400 status-logged-in';
+            qrStatusText.textContent = '✓ 扫码登录成功';
+            refreshButton.disabled = true;
+            break;
+          case 'error':
+            connectionStatusEl.textContent = '连接错误';
+            connectionStatusEl.className = 'mt-2 text-sm text-slate-500 status-error';
+            qrStatusText.textContent = message || '发生错误';
+            refreshButton.disabled = false;
+            break;
         }
+        
+        if (message) {
+          debugInfoEl.innerHTML = message;
+        } else {
+          debugInfoEl.innerHTML = '';
+        }
+        
+        lastUpdateEl.textContent = new Date().toLocaleTimeString();
+      }
+      
+      // 显示二维码
+      function showQrCode(qrDataUrl) {
+        qrImage.src = qrDataUrl;
+        qrImage.classList.remove('hidden');
+        qrImage.classList.add('qr-fade-in');
+        qrPlaceholder.classList.add('hidden');
+        qrStatusText.textContent = '二维码已显示';
+        
+        // 动画效果
+        setTimeout(() => {
+          qrImage.classList.remove('qr-fade-in');
+        }, 300);
+      }
+      
+      // 隐藏二维码
+      function hideQrCode() {
+        qrImage.classList.add('hidden');
+        qrPlaceholder.classList.remove('hidden');
+      }
+      
+      // SSE 连接
+      function connectSSE(domain) {
+        if (eventSource) {
+          eventSource.close();
+        }
+        
+        currentDomain = domain;
+        domainInput.value = domain;
+        currentDomainEl.textContent = domain;
+        
+        const eventsUrl = `${API_BASE}/events?domain=${encodeURIComponent(domain)}`;
+        eventSource = new EventSource(eventsUrl);
+        
+        eventSource.onopen = () => {
+          updateStatus('connecting');
+        };
+        
+        eventSource.onmessage = (event) => {
+          const data = JSON.parse(event.data);
+          console.log('[Dashboard] SSE event:', data);
+          
+          switch (data.event) {
+            case 'qr_updated':
+              if (data.data.qrAvailable) {
+                showQrCode(data.data.qrDataUrl);
+                updateStatus('qr_ready', '二维码已更新');
+              }
+              break;
+              
+            case 'login_status':
+              if (data.data.status === 'logged_in') {
+                updateStatus('logged_in');
+                setTimeout(() => hideQrCode(), 3000);
+              } else if (data.data.status === 'waiting_qr') {
+                updateStatus('waiting_qr');
+                hideQrCode();
+              } else if (data.data.status === 'scanned') {
+                updateStatus('waiting_qr', '正在验证...');
+              } else if (data.data.status === 'timeout') {
+                updateStatus('error', '二维码已过期');
+              }
+              break;
+              
+            case 'stopped':
+              updateStatus('disconnected', '监控已停止');
+              hideQrCode();
+              break;
+              
+            case 'error':
+              updateStatus('error', data.data.error || '发生错误');
+              break;
+          }
+        };
+        
+        eventSource.onerror = (err) => {
+          console.error('[Dashboard] SSE error:', err);
+          updateStatus('error', `连接失败: ${err.message}`);
+        };
+        
+        eventSource.onclose = () => {
+          console.log('[Dashboard] SSE connection closed');
+          updateStatus('disconnected');
+        };
+      }
+      
+      // 切换站点
+      async function switchDomain() {
+        const domain = domainInput.value.trim().toLowerCase();
+        
+        if (!domain) {
+          alert('请输入域名');
+          return;
+        }
+        
+        if (domain === currentDomain) {
+          console.log('[Dashboard] Same domain, reconnecting...');
+          // 重新连接当前域名的 SSE
+          connectSSE(domain);
+        } else {
+          console.log(`[Dashboard] Switching to ${domain}...`);
+          // 切换到新域名
+          currentDomain = domain;
+          currentDomainEl.textContent = domain;
+          updateStatus('connecting');
+          
+          // 关闭旧的 SSE 连接
+          if (eventSource) {
+            eventSource.close();
+          }
+          
+          // 延迟一下，让 DOM 更新
+          await new Promise(resolve => setTimeout(resolve, 100));
+          
+          // 连接新域名的 SSE
+          connectSSE(domain);
+        }
+      }
+      
+      // 手动刷新
+      async function manualRefresh() {
+        const domain = currentDomain;
+        console.log(`[Dashboard] Manual refresh for ${domain}`);
+        
+        try {
+          const response = await fetch(`${API_BASE}/qr/${domain}/refresh`, {
+            method: 'POST',
+          headers: {
+              'Content-Type': 'application/json',
+            },
+          });
+          
+          if (response.ok) {
+            updateStatus('refreshing', '正在刷新二维码...');
+            
+            const result = await response.json();
+            
+            setTimeout(() => {
+              if (result.success) {
+                updateStatus('qr_ready', '刷新成功');
+              } else {
+                updateStatus('error', result.message || '刷新失败');
+              }
+            }, 1000);
+          } else {
+            throw new Error('刷新请求失败');
+          }
+        } catch (err) {
+          console.error('[Dashboard] Refresh error:', err);
+          updateStatus('error', `刷新失败: ${err.message}`);
+        }
+      }
+      
+      // 初始化
+      async function init() {
+        const domain = domainInput.value.trim().toLowerCase() || currentDomain;
+        await switchDomain();
+      }
+      
+      // 页面加载后自动初始化
+      window.addEventListener('load', () => {
+        console.log('[Dashboard] Page loaded, initializing...');
+        init();
       });
-
-      source.onerror = () => {
-        source.close();
-        state.reconnectTimer = setTimeout(() => {
-          connectEvents();
-        }, 2000);
-      };
-    }
-
-    function startPolling() {
-      if (state.pollTimer) {
-        clearInterval(state.pollTimer);
-      }
-      state.pollTimer = setInterval(() => {
-        syncSnapshot().catch(() => {});
-      }, 5000);
-    }
-
-    elements.domainForm.addEventListener('submit', (event) => {
-      event.preventDefault();
-      const nextDomain = elements.domainInput.value.trim().replace(/^https?:\/\//, '').replace(/[/?#].*$/, '');
-      if (!nextDomain) {
-        return;
-      }
-      window.location.href = `/qr/${encodeURIComponent(nextDomain)}`;
-    });
-
-    elements.refreshButton.addEventListener('click', () => {
-      refreshQr();
-    });
-
-    updateHeader(state.domain);
-    syncSnapshot().catch((error) => {
-      elements.errorBox.textContent = error.message || String(error);
-      elements.errorBox.classList.remove('hidden');
-    });
-    connectEvents();
-    startPolling();
-  </script>
-</body>
+    </script>
+  </body>
 </html>

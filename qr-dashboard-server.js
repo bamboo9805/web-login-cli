@@ -11,9 +11,9 @@ const { QRMonitorManager, parsePort } = require('./src/qr/monitor-core');
 
 const ROOT_DIR = __dirname;
 const DASHBOARD_HTML = path.join(ROOT_DIR, 'qr-dashboard.html');
-const SERVER_PORT = parsePort(process.env.QR_DASHBOARD_PORT, 3000);
-const DEBUG_PORT_BASE = parsePort(process.env.QR_DASHBOARD_DEBUG_PORT_BASE, 9222);
-const MONITOR_PORT_BASE = parsePort(process.env.QR_DASHBOARD_MONITOR_PORT_BASE, 3999);
+const SERVER_PORT = parsePort(process.env.QR_DASHBOARD_PORT || 3000);
+const DEBUG_PORT_BASE = parsePort(process.env.QR_DASHBOARD_DEBUG_PORT_BASE || 9222);
+const MONITOR_PORT_BASE = parsePort(process.env.QR_DASHBOARD_MONITOR_PORT_BASE || 3999);
 const SESSION_TTL_MS = Number(process.env.QR_DASHBOARD_SESSION_TTL_MS || 5 * 60 * 1000);
 const DEFAULT_DOMAIN = String(process.env.QR_DASHBOARD_DEFAULT_DOMAIN || 'jd.com').trim().toLowerCase();
 const USER_AGENT =
@@ -22,6 +22,7 @@ const BROWSER_HEADLESS = (() => {
   const value = String(process.env.QR_DASHBOARD_HEADLESS || '1').trim().toLowerCase();
   return ['0', 'false', 'no'].includes(value) ? false : 'new';
 })();
+
 const LOCAL_CHROME_CANDIDATES = {
   darwin: ['/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'],
   win32: [
@@ -30,61 +31,31 @@ const LOCAL_CHROME_CANDIDATES = {
   ],
   linux: ['/usr/bin/google-chrome', '/usr/bin/google-chrome-stable', '/usr/bin/chromium-browser', '/usr/bin/chromium'],
 };
+
 const TARGET_URL_OVERRIDES = {
   'jd.com': 'https://www.jd.com/',
+  'zhihu.com': 'https://www.zhihu.com/signin',
+  'bilibili.com': 'https://passport.bilibili.com/login',
 };
 
 const app = express();
 const manager = new QRMonitorManager({ rootDir: ROOT_DIR });
 const sessions = new Map();
-const pendingSessions = new Map();
+const activeRequests = new Map();
 
-app.use(express.json());
-
-function detectLocalChromeExecutable() {
-  const candidates = LOCAL_CHROME_CANDIDATES[process.platform] || [];
-  for (const executablePath of candidates) {
-    if (executablePath && fs.existsSync(executablePath)) {
-      return executablePath;
-    }
-  }
-  return '';
-}
-
-function normalizeDomain(rawValue) {
-  let value = String(rawValue || '').trim().toLowerCase();
-  value = value.replace(/^https?:\/\//, '');
-  value = value.replace(/[/?#].*$/, '');
-  value = value.replace(/^www\./, '');
-  return value;
-}
-
-function assertDomain(domain) {
-  const cleanDomain = normalizeDomain(domain);
-  if (!cleanDomain || !/^[a-z0-9.-]+$/.test(cleanDomain) || !cleanDomain.includes('.')) {
-    throw new Error(`Invalid domain: ${domain}`);
-  }
-  return cleanDomain;
-}
-
-function toSessionId(domain) {
-  return `dashboard-${domain.replace(/[^a-z0-9.-]+/g, '-').slice(0, 40)}`;
-}
-
-function resolveTargetUrl(domain) {
-  const cleanDomain = assertDomain(domain);
-  return TARGET_URL_OVERRIDES[cleanDomain] || `https://${cleanDomain}`;
-}
-
-function wait(ms) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
+// SSE 连接管理
 function sendSse(res, event, payload) {
+  if (res.headersSent && !res.headersSent['Content-Type']) {
+    res.setHeader('Content-Type', 'text/event-stream');
+    res.flushHeaders();
+  }
   res.write(`event: ${event}\n`);
-  res.write(`data: ${JSON.stringify(payload)}\n\n`);
+  if (payload) {
+    res.write(`data: ${JSON.stringify(payload)}\n\n`);
+  }
 }
 
+// 检测端口是否可用
 async function isPortAvailable(port) {
   return new Promise((resolve) => {
     const server = net.createServer();
@@ -96,327 +67,362 @@ async function isPortAvailable(port) {
   });
 }
 
+// 查找可用端口
 async function findAvailablePort(startPort, takenPorts) {
-  for (let port = startPort; port < startPort + 200; port += 1) {
-    if (takenPorts.has(port)) {
-      continue;
-    }
-    if (await isPortAvailable(port)) {
+  for (let port = startPort; port < startPort + 200; port++) {
+    if (takenPorts.has(port)) continue;
+    const available = await isPortAvailable(port);
+    if (available) {
       return port;
     }
   }
-  throw new Error(`Unable to find an open port starting from ${startPort}`);
+  throw new Error(`No available ports found in range ${startPort}-${startPort + 199}`);
 }
 
-function getTakenPorts(key) {
-  const ports = new Set();
-  for (const entry of sessions.values()) {
-    if (entry[key]) {
-      ports.add(entry[key]);
-    }
-  }
-  return ports;
+// 域名规范化
+function normalizeDomain(rawValue) {
+  let value = String(rawValue || '').trim().toLowerCase();
+  value = value.replace(/^https?:\/\//, '');
+  value = value.replace(/[/?#].*$/, '');
+  value = value.replace(/^www\./, '');
+  return value;
 }
 
-function deriveLoginStatus(state, reason = '') {
-  if (reason === 'timeout') {
-    return 'timeout';
+// 域名验证
+function assertDomain(domain) {
+  const cleanDomain = normalizeDomain(domain);
+  if (!cleanDomain || !/^[a-z0-9.-]+$/.test(cleanDomain) || !cleanDomain.includes('.')) {
+    throw new Error(`Invalid domain: ${domain}`);
   }
-  if (state.status === 'logged_in') {
-    return 'logged_in';
-  }
-  const text = `${state.status || ''} ${state.message || ''}`.toLowerCase();
-  if (text.includes('scanned') || text.includes('已扫描') || text.includes('待确认') || text.includes('confirm')) {
-    return 'scanned';
-  }
-  return 'waiting';
+  return cleanDomain;
 }
 
-function buildPayload(entry, overrides = {}) {
-  const qrPayload = entry.session.getCurrentQrPayload();
-  const loginStatus = overrides.loginStatus || deriveLoginStatus(qrPayload, overrides.reason || '');
-  return {
-    domain: entry.domain,
-    targetUrl: entry.targetUrl,
-    sessionId: entry.session.sessionId,
-    loginStatus,
-    status: qrPayload.status,
-    message: overrides.message || qrPayload.message,
-    connected: qrPayload.connected,
-    qrAvailable: qrPayload.qrAvailable,
-    qrDataUrl: qrPayload.qrDataUrl,
-    qrPath: qrPayload.qrFile || '',
-    qrHash: qrPayload.hash,
-    pageUrl: qrPayload.pageUrl,
-    debugPort: entry.debugPort,
-    monitorPort: entry.monitorPort,
-    refreshCount: qrPayload.refreshCount,
-    qrAgeSec: qrPayload.qrAgeSec,
-    lastError: qrPayload.lastError,
-    lastUpdateAt: qrPayload.lastUpdateAt,
-    expiresAt: new Date(entry.expiresAt).toISOString(),
-  };
+// 生成会话 ID
+function toSessionId(domain) {
+  return `dashboard-${domain.replace(/[^a-z0-9.-]+/g, '-').slice(0, 40)}`;
 }
 
-function broadcast(entry, event, payload) {
-  for (const client of entry.clients) {
-    try {
-      sendSse(client, event, payload);
-    } catch (_error) {
-      entry.clients.delete(client);
-    }
-  }
+// 解析目标 URL
+function resolveTargetUrl(domain) {
+  const cleanDomain = assertDomain(domain);
+  return TARGET_URL_OVERRIDES[cleanDomain] || `https://${cleanDomain}`;
 }
 
-function endClients(entry) {
-  for (const client of entry.clients) {
-    try {
-      client.end();
-    } catch (_error) {
-      // noop
-    }
-  }
-  entry.clients.clear();
+// 等待函数
+function wait(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-function scheduleSessionExpiry(entry) {
-  if (entry.expiryTimer) {
-    clearTimeout(entry.expiryTimer);
-  }
-  entry.expiresAt = Date.now() + SESSION_TTL_MS;
-  entry.expiryTimer = setTimeout(() => {
-    void expireSession(entry.domain);
-  }, SESSION_TTL_MS);
-}
+// 启动监控会话
+async function startMonitorSession(domain) {
+  const sessionId = toSessionId(domain);
+  const debugPort = DEBUG_PORT_BASE + (sessions.size % 100);
+  const targetUrl = resolveTargetUrl(domain);
 
+  console.log(`[Dashboard] Starting monitor for ${domain} (session: ${sessionId})...`);
+  console.log(`[Dashboard] Target URL: ${targetUrl}`);
+  console.log(`[Dashboard] Debug port: ${debugPort}`);
+  console.log(`[Dashboard] Monitor port: ${MONITOR_PORT_BASE + (sessions.size % 100)}`);
 
-async function launchBrowserForDomain(domain, debugPort) {
-  const executablePath = process.env.PUPPETEER_EXECUTABLE_PATH || detectLocalChromeExecutable();
-  const browser = await puppeteer.launch({
-    headless: BROWSER_HEADLESS,
-    defaultViewport: { width: 1440, height: 960 },
-    executablePath: executablePath || undefined,
-    args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage', `--remote-debugging-port=${debugPort}`],
+  const session = await manager.createSession({
+    sessionId,
+    targetDomain: domain,
+    targetUrl,
+    debugPort,
+    monitorPort: MONITOR_PORT_BASE + (sessions.size % 100),
+    ttl: SESSION_TTL_MS,
+    timeoutMs: 180000,
   });
 
-  const pages = await browser.pages();
-  const page = pages[0] || (await browser.newPage());
-  await page.setUserAgent(USER_AGENT);
-  await page.goto(resolveTargetUrl(domain), {
-    waitUntil: 'networkidle2',
-    timeout: 60000,
+  sessions.set(sessionId, session);
+
+  // 监听状态变化
+  session.on('qr_updated', (data) => {
+    console.log(`[Dashboard] QR updated: ${domain}`);
+    forwardToAllClients(domain, 'qr_updated', data);
   });
-  return browser;
+
+  session.on('login_status', (data) => {
+    console.log(`[Dashboard] Login status: ${domain} = ${data.status}`);
+    forwardToAllClients(domain, 'login_status', data);
+  });
+
+  session.on('error', (err) => {
+    console.error(`[Dashboard] Session error: ${domain}`, err);
+    forwardToAllClients(domain, 'error', { error: err.message });
+  });
+
+  session.on('expired', () => {
+    console.log(`[Dashboard] Session expired: ${domain}`);
+    forwardToAllClients(domain, 'expired', null);
+  });
+
+  await session.start();
+  console.log(`[Dashboard] Monitor started for ${domain}`);
+
+  return session;
 }
 
-function attachEntryListeners(entry) {
-  entry.onStatus = (state) => {
-    const payload = buildPayload(entry, {
-      loginStatus: deriveLoginStatus(state),
-    });
-    broadcast(entry, 'login_status', payload);
-  };
+// 停止监控会话
+async function stopMonitorSession(domain) {
+  const sessionId = toSessionId(domain);
+  const session = sessions.get(sessionId);
 
-  entry.onQr = () => {
-    broadcast(entry, 'qr_updated', buildPayload(entry));
-  };
+  if (!session) {
+    throw new Error(`Session not found: ${domain}`);
+  }
 
-  entry.session.on('status', entry.onStatus);
-  entry.session.on('qr', entry.onQr);
+  console.log(`[Dashboard] Stopping monitor for ${domain}...`);
+  await session.stop();
+  sessions.delete(sessionId);
+
+  forwardToAllClients(domain, 'stopped', null);
 }
 
-async function detachEntry(entry) {
-  if (entry.expiryTimer) {
-    clearTimeout(entry.expiryTimer);
-    entry.expiryTimer = null;
-  }
-  if (entry.onStatus) {
-    entry.session.off('status', entry.onStatus);
-  }
-  if (entry.onQr) {
-    entry.session.off('qr', entry.onQr);
-  }
-  try {
-    await manager.stopSession(entry.session.sessionId);
-  } catch (_error) {
-    // noop
-  }
-  try {
-    if (entry.browser) {
-      await entry.browser.close();
+// 前端广播
+function forwardToAllClients(domain, event, payload) {
+  for (const [res, clientInfo] of activeRequests.values()) {
+    if (clientInfo.domain === domain) {
+      sendSse(res, event, payload);
     }
-  } catch (_error) {
-    // noop
   }
-  endClients(entry);
-  sessions.delete(entry.domain);
 }
 
-async function expireSession(domain) {
-  const entry = sessions.get(domain);
-  if (!entry) {
+// 获取会话状态
+function getSessionState(domain) {
+  const sessionId = toSessionId(domain);
+  const session = sessions.get(sessionId);
+
+  if (!session) {
+    return { status: 'not_started' };
+  }
+
+  return session.getPublicState();
+}
+
+// 检查本地 Chrome
+function detectLocalChromeExecutable() {
+  const candidates = LOCAL_CHROME_CANDIDATES[process.platform] || [];
+  for (const executablePath of candidates) {
+    if (executablePath && fs.existsSync(executablePath)) {
+      return executablePath;
+    }
+  }
+  return '';
+}
+
+// Express 路由
+app.get('/qr/:domain', async (req, res) => {
+  const domain = req.params.domain?.toLowerCase();
+  
+  try {
+    assertDomain(domain);
+  } catch (err) {
+    res.status(400).json({ error: err.message });
     return;
   }
-  const payload = buildPayload(entry, {
-    reason: 'timeout',
-    loginStatus: 'timeout',
-    message: 'QR session timed out after 5 minutes',
-  });
-  broadcast(entry, 'login_status', payload);
-  await wait(50);
-  await detachEntry(entry);
-}
 
-async function createSession(domain) {
-  const cleanDomain = assertDomain(domain);
-  const debugPort = await findAvailablePort(DEBUG_PORT_BASE, getTakenPorts('debugPort'));
-  const monitorPort = await findAvailablePort(MONITOR_PORT_BASE, getTakenPorts('monitorPort'));
-  const browser = await launchBrowserForDomain(cleanDomain, debugPort);
-  const session = await manager.startSession({
-    sessionId: toSessionId(cleanDomain),
-    targetDomain: cleanDomain,
-    debugPort,
-    monitorPort,
-    pollIntervalMs: 1000,
-    qrMaxAgeMs: 45000,
-    qrRefreshCooldownMs: 3500,
-  });
+  const sessionId = toSessionId(domain);
+  let session = sessions.get(sessionId);
 
-  const entry = {
-    domain: cleanDomain,
-    targetUrl: resolveTargetUrl(cleanDomain),
-    session,
-    browser,
-    debugPort,
-    monitorPort,
-    clients: new Set(),
-    expiryTimer: null,
-    expiresAt: Date.now() + SESSION_TTL_MS,
-    onStatus: null,
-    onQr: null,
-  };
-
-  attachEntryListeners(entry);
-  scheduleSessionExpiry(entry);
-  sessions.set(cleanDomain, entry);
-  return entry;
-}
-
-async function ensureSession(domain) {
-  const cleanDomain = assertDomain(domain);
-  const activeEntry = sessions.get(cleanDomain);
-  if (activeEntry) {
-    return activeEntry;
+  // 如果会话不存在，则创建新的
+  if (!session || session.isStopped()) {
+    console.log(`[Dashboard] Creating new session for ${domain}...`);
+    session = await startMonitorSession(domain);
   }
 
-  if (pendingSessions.has(cleanDomain)) {
-    return pendingSessions.get(cleanDomain);
-  }
+  // 返回初始状态（如果二维码未准备好，返回等待状态）
+  const state = session.getPublicState();
 
-  const createPromise = createSession(cleanDomain).finally(() => {
-    pendingSessions.delete(cleanDomain);
-  });
-  pendingSessions.set(cleanDomain, createPromise);
-  return createPromise;
-}
+  // 设置 SSE 响应头
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Connection', 'keep-alive');
 
-async function withSession(req, res, next) {
-  try {
-    req.dashboardSession = await ensureSession(req.params.domain || req.query.domain || DEFAULT_DOMAIN);
-    next();
-  } catch (error) {
-    res.status(500).json({
-      error: String(error.message || error),
-    });
-  }
-}
+  res.write(`event: qr_ready\n`);
+  res.write(`data: ${JSON.stringify(state)}\n\n`);
 
-app.get('/', (_req, res) => {
-  res.redirect(`/qr/${encodeURIComponent(DEFAULT_DOMAIN)}`);
+  // 记录客户端连接
+  const clientId = Date.now().toString(36);
+  activeRequests.set(clientId, { domain, res });
 });
 
-app.get('/qr-dashboard.html', (_req, res) => {
-  res.sendFile(DASHBOARD_HTML);
-});
-
-app.get('/qr/:domain', (_req, res) => {
-  res.sendFile(DASHBOARD_HTML);
-});
-
-app.get('/api/qr/:domain', withSession, (req, res) => {
-  res.json(buildPayload(req.dashboardSession));
-});
-
-app.get('/api/qr/:domain/image', withSession, (req, res) => {
-  const buffer = req.dashboardSession.session.getCurrentQrBuffer();
-  if (!buffer) {
-    res.status(404).json({ error: 'QR image not ready yet' });
-    return;
-  }
-  res.setHeader('Content-Type', 'image/png');
-  res.end(buffer);
-});
-
-app.post('/api/qr/:domain/refresh', withSession, async (req, res) => {
-  try {
-    await req.dashboardSession.session.requestRefresh(true);
-    res.json(buildPayload(req.dashboardSession));
-  } catch (error) {
-    res.status(500).json({
-      error: String(error.message || error),
-    });
-  }
-});
-
+// SSE 连接端点
 app.get('/events', async (req, res) => {
-  try {
-    const domain = req.query.domain || DEFAULT_DOMAIN;
-    const entry = await ensureSession(domain);
+  const url = new URL(req.url, `http://${req.headers.host}`);
+  const domain = url.searchParams.get('domain')?.toLowerCase();
 
-    res.setHeader('Content-Type', 'text/event-stream');
-    res.setHeader('Cache-Control', 'no-cache, no-transform');
-    res.setHeader('Connection', 'keep-alive');
-    res.flushHeaders();
-
-    entry.clients.add(res);
-
-    sendSse(res, 'login_status', buildPayload(entry));
-    if (entry.session.getCurrentQrPayload().qrDataUrl) {
-      sendSse(res, 'qr_updated', buildPayload(entry));
-    }
-
-    const heartbeat = setInterval(() => {
-      try {
-        res.write(': keep-alive\n\n');
-      } catch (_error) {
-        clearInterval(heartbeat);
-      }
-    }, 15000);
-
-    req.on('close', () => {
-      clearInterval(heartbeat);
-      entry.clients.delete(res);
-    });
-  } catch (error) {
-    res.status(500).json({
-      error: String(error.message || error),
-    });
+  if (!domain) {
+    res.status(400).send('Missing domain parameter');
+    return;
   }
+
+  try {
+    assertDomain(domain);
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+    return;
+  }
+
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Connection', 'keep-alive');
+
+  // 记录客户端连接
+  const clientId = Date.now().toString(36);
+  activeRequests.set(clientId, { domain, res });
+
+  // 发送初始状态
+  const state = getSessionState(domain);
+  sendSse(res, 'qr_ready', state);
+
+  req.on('close', () => {
+    console.log(`[Dashboard] Client disconnected (domain: ${domain})`);
+    activeRequests.delete(clientId);
+  });
 });
 
-async function main() {
-  app.listen(SERVER_PORT, () => {
-    process.stdout.write(`[qr-dashboard] listening on http://127.0.0.1:${SERVER_PORT}/qr/${DEFAULT_DOMAIN}\n`);
+// 手动刷新二维码
+app.post('/qr/:domain/refresh', async (req, res) => {
+  const domain = req.params.domain?.toLowerCase();
+
+  try {
+    assertDomain(domain);
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+    return;
+  }
+
+  const sessionId = toSessionId(domain);
+  const session = sessions.get(sessionId);
+
+  if (!session) {
+    return res.status(400).json({ error: 'Session not found' });
+  }
+
+  console.log(`[Dashboard] Manual refresh requested for ${domain}`);
+  
+  // 请求刷新
+  if (session.publicState) {
+    await session.publicState.requestRefresh();
+  }
+
+  const state = session.getPublicState();
+  sendSse(res, 'qr_updated', state);
+});
+
+// 停止监控
+app.post('/qr/:domain/stop', async (req, res) => {
+  const domain = req.params.domain?.toLowerCase();
+
+  try {
+    assertDomain(domain);
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+    return;
+  }
+
+  await stopMonitorSession(domain);
+
+  res.json({ success: true, message: `Monitor stopped for ${domain}` });
+});
+
+// 健康检查
+app.get('/health', (req, res) => {
+  const managerState = manager.getPublicState();
+  res.json({
+    status: 'healthy',
+    sessions: Array.from(sessions.keys()),
+    managerState,
+    timestamp: new Date().toISOString(),
   });
+});
+
+// 首页路由
+app.get('/', (req, res) => {
+  res.sendFile(DASHBOARD_HTML);
+});
+
+// 404 处理
+app.use((req, res, next) => {
+  res.status(404).json({ error: 'Not found' });
+});
+
+// 错误处理
+app.use((err, req, res, next) => {
+  console.error('[Dashboard] Error:', err);
+  res.status(500).json({ error: err.message });
+});
+
+// 启动服务器
+async function startServer() {
+  const serverPort = await findAvailablePort(SERVER_PORT, [MONITOR_PORT_BASE]);
+  console.log(`[Dashboard] Starting on port ${serverPort}...`);
+
+  app.listen(serverPort, '127.0.0.1', () => {
+    console.log(`[Dashboard] Server running on http://127.0.0.1:${serverPort}`);
+  });
+
+  return serverPort;
+}
+
+// 主函数
+async function main() {
+  console.log('========================================');
+  console.log('QR Dashboard Server');
+  console.log('========================================');
+  console.log('');
+  console.log(`[Dashboard] Config:`);
+  console.log(`[Dashboard]   Server Port: ${SERVER_PORT}`);
+  console.log(`[Dashboard]   Debug Port Base: ${DEBUG_PORT_BASE}`);
+  console.log(`[Dashboard]   Monitor Port Base: ${MONITOR_PORT_BASE}`);
+  console.log(`[Dashboard]   Session TTL: ${SESSION_TTL_MS / 1000}s`);
+  console.log(`[Dashboard]   Default Domain: ${DEFAULT_DOMAIN}`);
+  console.log(`[Dashboard]   Target URLs:`, TARGET_URL_OVERRIDES);
+  console.log('');
+
+  const chromePath = detectLocalChromeExecutable();
+  const headless = BROWSER_HEADLESS();
+  const browserArgs = chromePath
+    ? [`--no-sandbox`, `--disable-setuid-sandbox`, `--headless=${headless}`, `--user-agent=${USER_AGENT}`]
+    : [`--no-sandbox`, `--disable-setuid-sandbox`, `--headless=${headless}`, `--user-agent=${USER_AGENT}`];
+
+  console.log(`[Dashboard] Chrome Path: ${chromePath || 'Default'}`);
+  console.log(`[Dashboard] Headless: ${headless}`);
+
+  try {
+    await manager.initialize({
+      chromePath,
+      headless,
+      args: browserArgs,
+    });
+  } catch (err) {
+    console.error('[Dashboard] Failed to initialize QRMonitorManager:', err);
+  }
+
+  await startServer();
+
+  console.log('');
+  console.log('[Dashboard] Ready to serve requests!');
+  console.log('');
+  console.log('========================================');
+  console.log('API Endpoints:');
+  console.log('  GET  /qr/:domain       - Get QR code with SSE updates');
+  console.log('  GET  /events?domain=X   - SSE stream for live updates');
+  console.log('  POST /qr/:domain/refresh  - Manual refresh QR code');
+  console.log('  POST /qr/:domain/stop     - Stop monitoring session');
+  console.log('  GET  /health            - Health check');
+  console.log('  GET  /                  - Dashboard UI');
+  console.log('');
+  console.log('Usage:');
+  console.log('  QR_DASHBOARD_PORT=3000   # Server port (default 3000)');
+  console.log('  QR_DASHBOARD_DEBUG_PORT_BASE=9222   # Debug port base (default 9222)');
+  console.log('  QR_DASHBOARD_MONITOR_PORT_BASE=3999   # Monitor port base (default 3999)');
+  console.log('  QR_DASHBOARD_SESSION_TTL_MS=300000   # Session TTL (default 5 minutes)');
+  console.log('  QR_DASHBOARD_DEFAULT_DOMAIN=jd.com   # Default domain');
+  console.log('');
 }
 
 if (require.main === module) {
-  main().catch((error) => {
-    process.stderr.write(`[qr-dashboard] startup failed: ${String(error.message || error)}\n`);
-    process.exit(1);
-  });
+  main();
 }
-
-module.exports = {
-  app,
-};
