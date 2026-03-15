@@ -135,6 +135,26 @@ node qr-monitor-server.js --target-domain douyin.com --port 3999 --debug-port 92
 - `GET /api/qr/stream` (SSE)
 - `POST /api/refresh`
 
+## QR Dashboard
+
+启动 Web 二维码面板：
+
+```bash
+npm run qr:dashboard
+```
+
+打开：
+
+- `http://127.0.0.1:3000/qr/jd.com`
+- `http://127.0.0.1:3000/qr/taobao.com`
+
+说明：
+
+- 服务会自动为目标域名启动一个浏览器会话
+- 前端通过 SSE 实时接收二维码和登录状态更新
+- 页面也会每 5 秒同步一次最新状态
+- 点击“手动刷新”会请求重新抓取二维码
+
 ## QR Monitor MCP
 
 启动 MCP 服务：
