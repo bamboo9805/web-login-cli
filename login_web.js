@@ -140,6 +140,27 @@ const SITE_CONFIGS = {
     ],
     qrSwitchSelectors: ['.scan-icon', '[class*="scan"]', '[class*="qrcode-tab"]', '[class*="qr-tab"]'],
   },
+  'jd.com': {
+    authCookieName: null,
+    loginIndicators: [],
+    loginButtonKeywords: [],
+    qrTabKeywords: [],
+    qrHintKeywords: ['扫码', '二维码'],
+    loginModalSelectors: [
+      '.qrcode-login',
+      '.login-form-border',
+      '.login-new-wrap',
+      '.login-form-bottom',
+      '.login-form.login-form-l'
+    ],
+    qrCodeSelectors: [
+      '#passport-main-qrcode-img',
+      '.qrcode-img img',
+      '.qrcode-main .qrcode-img img',
+      'img[src*="qr.m.jd.com/show"]'
+    ],
+    qrSwitchSelectors: [],
+  },
 };
 
 const LOGIN_BUTTON_KEYWORDS = [
