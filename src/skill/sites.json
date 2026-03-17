@@ -1,0 +1,59 @@
+{
+  "taobao": {
+    "domain": "taobao.com",
+    "loginUrl": "https://www.taobao.com",
+    "supportsQr": true,
+    "aliases": [
+      "tb",
+      "taobao.com",
+      "www.taobao.com"
+    ]
+  },
+  "goofish": {
+    "domain": "goofish.com",
+    "loginUrl": "https://www.goofish.com/",
+    "supportsQr": true,
+    "aliases": [
+      "xianyu",
+      "goofish.com",
+      "www.goofish.com"
+    ]
+  },
+  "douyin": {
+    "domain": "douyin.com",
+    "loginUrl": "https://www.douyin.com",
+    "supportsQr": true,
+    "aliases": [
+      "douyin.com",
+      "www.douyin.com"
+    ]
+  },
+  "ctrip": {
+    "domain": "ctrip.com",
+    "loginUrl": "https://flights.ctrip.com",
+    "supportsQr": true,
+    "aliases": [
+      "xiecheng",
+      "ctrip.com",
+      "flights.ctrip.com"
+    ]
+  },
+  "github": {
+    "domain": "github.com",
+    "loginUrl": "https://github.com/login",
+    "supportsQr": false,
+    "aliases": [
+      "github.com",
+      "www.github.com"
+    ]
+  },
+  "instagram": {
+    "domain": "instagram.com",
+    "loginUrl": "https://www.instagram.com/accounts/login/",
+    "supportsQr": false,
+    "aliases": [
+      "instagram.com",
+      "www.instagram.com"
+    ]
+  }
+}

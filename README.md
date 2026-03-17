@@ -186,10 +186,53 @@ npm run mcp:qr
 - `logs/qr-current*.png`（QR Monitor 当前二维码）
 - `logs/qr-<domain>-<port>-<timestamp>.png`（QR Monitor 历史二维码）
 
+## OpenClaw Skill Wrapper
+
+项目新增了一个 OpenClaw 友好的包装 CLI：`web-login-skill.js`，并复用了现有 `login_web.js` 与 `.web-login-cli/sessions` 会话文件。
+
+站点能力配置文件：
+
+- `src/skill/sites.json`
+- 字段：`loginUrl`、`supportsQr`、`aliases`
+
+示例命令：
+
+```bash
+# 使用站点 key 登录（会委托给现有 login_web.js）
+node web-login-skill.js login --site taobao
+
+# 使用 URL 登录
+node web-login-skill.js login --url https://example.com
+
+# 导出 cookies（puppeteer 格式）
+node web-login-skill.js export --site taobao --format puppeteer
+
+# 查看状态（cookie 文件、mtime、数量、supportsQr、解析后的 domain/url）
+node web-login-skill.js status --site taobao
+
+# 安全清理（仅清理目标域名相关文件，需确认）
+node web-login-skill.js clear --site taobao --yes
+```
+
+`export --format puppeteer` 返回 JSON：
+
+```json
+{
+  "cookies": [],
+  "setCookieSnippet": "await page.setCookie(...cookies);"
+}
+```
+
+OpenClaw skill 说明见：
+
+- `openclaw-skill/SKILL.md`
+
 ## Bin Command
 
 安装后可使用：
 
 ```bash
 npx login-web https://www.instagram.com
+# or
+npx web-login-skill status --site taobao
 ```
