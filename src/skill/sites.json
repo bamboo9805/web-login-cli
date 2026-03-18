@@ -8,7 +8,53 @@
       "淘宝",
       "taobao.com",
       "www.taobao.com"
-    ]
+    ],
+    "cookieDomainAllowlist": [
+      "taobao.com",
+      "tmall.com"
+    ],
+    "successCriteria": {
+      "authCookieName": "cookie2",
+      "loginIndicators": [],
+      "successUrlPatterns": []
+    },
+    "detection": {
+      "loginButtonKeywords": [
+        "登录",
+        "亲，请登录",
+        "请登录",
+        "立即登录",
+        "账户登录"
+      ],
+      "qrTabKeywords": [
+        "扫码登录",
+        "二维码登录",
+        "手机扫码登录",
+        "扫码"
+      ],
+      "qrHintKeywords": [
+        "扫码",
+        "二维码",
+        "qr",
+        "qrcode",
+        "taobao",
+        "淘宝",
+        "手机淘宝"
+      ],
+      "loginModalSelectors": [
+        ".login-content",
+        ".login-box",
+        ".module-static",
+        ".login-panel"
+      ],
+      "qrCodeSelectors": [
+        ".module-quick img",
+        ".qrcode-login img",
+        "img[src*=\"qrcode\"]",
+        "canvas[class*=\"qr\"]"
+      ],
+      "qrSwitchSelectors": []
+    }
   },
   "goofish": {
     "domain": "goofish.com",
@@ -19,7 +65,57 @@
       "闲鱼",
       "goofish.com",
       "www.goofish.com"
-    ]
+    ],
+    "cookieDomainAllowlist": [
+      "goofish.com",
+      "taobao.com"
+    ],
+    "successCriteria": {
+      "authCookieName": "cookie2",
+      "loginIndicators": [],
+      "successUrlPatterns": []
+    },
+    "detection": {
+      "loginButtonKeywords": [
+        "登录",
+        "请登录",
+        "去登录",
+        "立即登录",
+        "账号登录",
+        "手机扫码登录"
+      ],
+      "qrTabKeywords": [
+        "扫码登录",
+        "二维码登录",
+        "手机扫码登录",
+        "扫码",
+        "淘宝扫码登录"
+      ],
+      "qrHintKeywords": [
+        "扫码",
+        "二维码",
+        "qr",
+        "qrcode",
+        "goofish",
+        "闲鱼",
+        "淘宝"
+      ],
+      "loginModalSelectors": [
+        ".login-content",
+        ".login-box",
+        ".module-static",
+        ".login-panel",
+        ".fish-login-dialog"
+      ],
+      "qrCodeSelectors": [
+        ".module-quick img",
+        ".qrcode-login img",
+        "[class*=\"qr\"] img",
+        "img[src*=\"qrcode\"]",
+        "canvas[class*=\"qr\"]"
+      ],
+      "qrSwitchSelectors": []
+    }
   },
   "douyin": {
     "domain": "douyin.com",
@@ -29,7 +125,57 @@
       "抖音",
       "douyin.com",
       "www.douyin.com"
-    ]
+    ],
+    "cookieDomainAllowlist": [
+      "douyin.com"
+    ],
+    "successCriteria": {
+      "authCookieName": null,
+      "loginIndicators": [],
+      "successUrlPatterns": []
+    },
+    "detection": {
+      "loginButtonKeywords": [
+        "登录",
+        "去登录",
+        "立即登录",
+        "手机号登录",
+        "抖音登录"
+      ],
+      "qrTabKeywords": [
+        "扫码登录",
+        "二维码登录",
+        "抖音扫码登录",
+        "扫码"
+      ],
+      "qrHintKeywords": [
+        "扫码",
+        "二维码",
+        "qr",
+        "qrcode",
+        "抖音"
+      ],
+      "loginModalSelectors": [
+        ".login-modal",
+        ".semi-modal-content",
+        ".login-dialog",
+        "[class*=\"login\"]"
+      ],
+      "qrCodeSelectors": [
+        "[class*=\"qrcode\"] img",
+        "[class*=\"qr-code\"] img",
+        "[class*=\"qr\"] img",
+        "img[src*=\"qrcode\"]",
+        "img[src*=\"qr\"]",
+        "canvas[class*=\"qr\"]"
+      ],
+      "qrSwitchSelectors": [
+        ".scan-icon",
+        "[class*=\"scan\"]",
+        "[class*=\"qrcode-tab\"]",
+        "[class*=\"qr-tab\"]"
+      ]
+    }
   },
   "ctrip": {
     "domain": "ctrip.com",
@@ -40,7 +186,50 @@
       "携程",
       "ctrip.com",
       "flights.ctrip.com"
-    ]
+    ],
+    "cookieDomainAllowlist": [
+      "ctrip.com"
+    ],
+    "successCriteria": {
+      "authCookieName": "cticket",
+      "loginIndicators": [],
+      "successUrlPatterns": []
+    },
+    "detection": {
+      "loginButtonKeywords": [
+        "登录",
+        "登录/注册",
+        "立即登录",
+        "去登录",
+        "手机扫码登录"
+      ],
+      "qrTabKeywords": [
+        "扫码登录",
+        "二维码登录",
+        "手机扫码登录",
+        "扫码"
+      ],
+      "qrHintKeywords": [
+        "扫码",
+        "二维码",
+        "qr",
+        "qrcode",
+        "ctrip",
+        "携程"
+      ],
+      "loginModalSelectors": [
+        ".pc_login_container",
+        ".lg_loginbox_modal",
+        ".un_login_container"
+      ],
+      "qrCodeSelectors": [
+        ".pc_login_container img",
+        ".lg_loginbox_modal img",
+        "img[src*=\"qrcode\"]",
+        "canvas[class*=\"qr\"]"
+      ],
+      "qrSwitchSelectors": []
+    }
   },
   "github": {
     "domain": "github.com",
@@ -48,8 +237,33 @@
     "supportsQr": false,
     "aliases": [
       "github.com",
-      "www.github.com"
-    ]
+      "www.github.com",
+      "gh"
+    ],
+    "cookieDomainAllowlist": [
+      "github.com"
+    ],
+    "successCriteria": {
+      "authCookieName": "logged_in",
+      "loginIndicators": [
+        "[data-test-selector=\"profile\"]",
+        "summary[aria-label*=\"profile\"]"
+      ],
+      "successUrlPatterns": [
+        "github.com"
+      ]
+    },
+    "detection": {
+      "loginButtonKeywords": [
+        "Sign in",
+        "登录"
+      ],
+      "qrTabKeywords": [],
+      "qrHintKeywords": [],
+      "loginModalSelectors": [],
+      "qrCodeSelectors": [],
+      "qrSwitchSelectors": []
+    }
   },
   "instagram": {
     "domain": "instagram.com",
@@ -57,8 +271,351 @@
     "supportsQr": false,
     "aliases": [
       "ins",
+      "instagram",
       "instagram.com",
       "www.instagram.com"
-    ]
+    ],
+    "cookieDomainAllowlist": [
+      "instagram.com"
+    ],
+    "successCriteria": {
+      "authCookieName": "sessionid",
+      "loginIndicators": [
+        "nav",
+        "[role=\"button\"]"
+      ],
+      "successUrlPatterns": [
+        "instagram.com"
+      ]
+    },
+    "detection": {
+      "loginButtonKeywords": [
+        "Log in",
+        "登录"
+      ],
+      "qrTabKeywords": [],
+      "qrHintKeywords": [],
+      "loginModalSelectors": [],
+      "qrCodeSelectors": [],
+      "qrSwitchSelectors": []
+    }
+  },
+  "jianying": {
+    "domain": "jianying.com",
+    "loginUrl": "https://www.jianying.com/",
+    "supportsQr": true,
+    "aliases": [
+      "剪映",
+      "jianying.com"
+    ],
+    "cookieDomainAllowlist": [
+      "jianying.com"
+    ],
+    "successCriteria": {
+      "authCookieName": null,
+      "loginIndicators": [],
+      "successUrlPatterns": []
+    },
+    "detection": {
+      "loginButtonKeywords": [
+        "登录",
+        "注册",
+        "开启",
+        "立即开启",
+        "开启创作",
+        "开始创作",
+        "马上体验"
+      ],
+      "qrTabKeywords": [
+        "扫码登录",
+        "二维码登录",
+        "扫码快捷登录",
+        "扫码",
+        "二维码"
+      ],
+      "qrHintKeywords": [
+        "扫码",
+        "二维码",
+        "qr",
+        "qrcode",
+        "scan"
+      ],
+      "loginModalSelectors": [
+        ".semi-modal-content",
+        ".semi-modal",
+        ".web-login-dialog"
+      ],
+      "qrCodeSelectors": [
+        "img[src*=\"qrcode\"]",
+        "canvas[class*=\"qr\"]"
+      ],
+      "qrSwitchSelectors": []
+    }
+  },
+  "dianping": {
+    "domain": "dianping.com",
+    "loginUrl": "https://account.dianping.com/pclogin",
+    "supportsQr": true,
+    "aliases": [
+      "大众点评",
+      "点评",
+      "dianping.com"
+    ],
+    "cookieDomainAllowlist": [
+      "dianping.com",
+      "meituan.com"
+    ],
+    "successCriteria": {
+      "authCookieName": null,
+      "loginIndicators": [],
+      "successUrlPatterns": []
+    },
+    "detection": {
+      "loginButtonKeywords": [
+        "登录",
+        "登录/注册",
+        "账号登录/注册",
+        "立即登录",
+        "去登录"
+      ],
+      "qrTabKeywords": [
+        "扫码登录",
+        "二维码登录",
+        "APP扫码登录",
+        "扫码"
+      ],
+      "qrHintKeywords": [
+        "扫码",
+        "二维码",
+        "qr",
+        "qrcode",
+        "dianping",
+        "大众点评",
+        "美团"
+      ],
+      "loginModalSelectors": [
+        ".login-dialog",
+        ".login-form",
+        ".passport-login-container",
+        ".J-login-by-qrcode"
+      ],
+      "qrCodeSelectors": [
+        ".J-login-by-qrcode .qrcode",
+        ".J-login-by-qrcode [class*=\"qrcode\"]",
+        ".J-login-by-qrcode [class*=\"qr\"]",
+        ".login-form [class*=\"qrcode\"]",
+        ".login-form [class*=\"qr\"]",
+        "img[src*=\"qrcode\"]",
+        "img[src*=\"showqrcode\"]",
+        "canvas[class*=\"qr\"]"
+      ],
+      "qrSwitchSelectors": [
+        ".scan-icon",
+        ".J-qr-code-login",
+        ".qrcode-tab",
+        ".qr-tab"
+      ]
+    }
+  },
+  "yuanbao": {
+    "domain": "yuanbao.tencent.com",
+    "loginUrl": "https://yuanbao.tencent.com",
+    "supportsQr": true,
+    "aliases": [
+      "元宝",
+      "yuanbao.tencent.com",
+      "tencent yuanbao"
+    ],
+    "cookieDomainAllowlist": [
+      "yuanbao.tencent.com",
+      "tencent.com"
+    ],
+    "successCriteria": {
+      "authCookieName": null,
+      "loginIndicators": [],
+      "successUrlPatterns": []
+    },
+    "detection": {
+      "loginButtonKeywords": [
+        "登录",
+        "立即登录",
+        "去登录",
+        "账号登录",
+        "腾讯登录",
+        "微信登录"
+      ],
+      "qrTabKeywords": [
+        "扫码登录",
+        "二维码登录",
+        "微信扫码登录",
+        "扫码"
+      ],
+      "qrHintKeywords": [
+        "扫码",
+        "二维码",
+        "qr",
+        "qrcode",
+        "元宝",
+        "微信"
+      ],
+      "loginModalSelectors": [
+        ".login-dialog",
+        ".login-modal",
+        ".login-panel",
+        "[class*=\"login\"]"
+      ],
+      "qrCodeSelectors": [
+        "[class*=\"qrcode\"] img",
+        "[class*=\"qr-code\"] img",
+        "[class*=\"qr\"] img",
+        "img[src*=\"qrcode\"]",
+        "img[src*=\"qr\"]",
+        "canvas[class*=\"qr\"]"
+      ],
+      "qrSwitchSelectors": [
+        ".scan-icon",
+        "[class*=\"scan\"]",
+        "[class*=\"qrcode-tab\"]",
+        "[class*=\"qr-tab\"]"
+      ]
+    }
+  },
+  "doubao": {
+    "domain": "doubao.com",
+    "loginUrl": "https://www.doubao.com",
+    "supportsQr": true,
+    "aliases": [
+      "豆包",
+      "doubao.com",
+      "www.doubao.com"
+    ],
+    "cookieDomainAllowlist": [
+      "doubao.com"
+    ],
+    "successCriteria": {
+      "authCookieName": null,
+      "loginIndicators": [],
+      "successUrlPatterns": []
+    },
+    "detection": {
+      "loginButtonKeywords": [
+        "登录",
+        "立即登录",
+        "去登录",
+        "手机号登录",
+        "账号登录",
+        "抖音登录"
+      ],
+      "qrTabKeywords": [
+        "扫码登录",
+        "二维码登录",
+        "抖音扫码登录",
+        "扫码"
+      ],
+      "qrHintKeywords": [
+        "扫码",
+        "二维码",
+        "qr",
+        "qrcode",
+        "豆包",
+        "抖音"
+      ],
+      "loginModalSelectors": [
+        ".login-modal",
+        ".semi-modal-content",
+        ".login-dialog",
+        "[class*=\"login\"]"
+      ],
+      "qrCodeSelectors": [
+        "[class*=\"qrcode\"] img",
+        "[class*=\"qr-code\"] img",
+        "[class*=\"qr\"] img",
+        "img[src*=\"qrcode\"]",
+        "img[src*=\"qr\"]",
+        "canvas[class*=\"qr\"]"
+      ],
+      "qrSwitchSelectors": [
+        ".scan-icon",
+        "[class*=\"scan\"]",
+        "[class*=\"qrcode-tab\"]",
+        "[class*=\"qr-tab\"]"
+      ]
+    }
+  },
+  "jd": {
+    "domain": "jd.com",
+    "loginUrl": "https://passport.jd.com/new/login.aspx",
+    "supportsQr": true,
+    "aliases": [
+      "京东",
+      "jd.com",
+      "www.jd.com"
+    ],
+    "cookieDomainAllowlist": [
+      "jd.com"
+    ],
+    "successCriteria": {
+      "authCookieName": null,
+      "loginIndicators": [],
+      "successUrlPatterns": []
+    },
+    "detection": {
+      "loginButtonKeywords": [],
+      "qrTabKeywords": [],
+      "qrHintKeywords": [
+        "扫码",
+        "二维码"
+      ],
+      "loginModalSelectors": [
+        ".qrcode-login",
+        ".login-form-border",
+        ".login-new-wrap",
+        ".login-form-bottom",
+        ".login-form.login-form-l"
+      ],
+      "qrCodeSelectors": [
+        "#passport-main-qrcode-img",
+        ".qrcode-img img",
+        ".qrcode-main .qrcode-img img",
+        "img[src*=\"qr.m.jd.com/show\"]"
+      ],
+      "qrSwitchSelectors": []
+    }
+  },
+  "twitter": {
+    "domain": "twitter.com",
+    "loginUrl": "https://twitter.com/i/flow/login",
+    "supportsQr": false,
+    "aliases": [
+      "x.com",
+      "twitter",
+      "推特"
+    ],
+    "cookieDomainAllowlist": [
+      "twitter.com",
+      "x.com"
+    ],
+    "successCriteria": {
+      "authCookieName": "auth_token",
+      "loginIndicators": [
+        "[data-testid=\"userNav\"]"
+      ],
+      "successUrlPatterns": [
+        "twitter.com",
+        "x.com"
+      ]
+    },
+    "detection": {
+      "loginButtonKeywords": [
+        "Log in",
+        "Sign in",
+        "登录"
+      ],
+      "qrTabKeywords": [],
+      "qrHintKeywords": [],
+      "loginModalSelectors": [],
+      "qrCodeSelectors": [],
+      "qrSwitchSelectors": []
+    }
   }
 }

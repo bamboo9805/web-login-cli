@@ -193,7 +193,13 @@ npm run mcp:qr
 站点能力配置文件：
 
 - `src/skill/sites.json`
-- 字段：`loginUrl`、`supportsQr`、`aliases`
+- 关键字段：
+  - `loginUrl`
+  - `supportsQr`（可扫码/不可扫码）
+  - `aliases`
+  - `detection`（登录入口、二维码切换/定位 selectors 与关键词）
+  - `successCriteria`（认证 cookie、登录成功 DOM/URL 规则）
+  - `cookieDomainAllowlist`（导出与落盘时允许保留的 cookie 域名）
 
 示例命令：
 
@@ -228,9 +234,15 @@ node web-login-skill.js "帮我查看淘宝登录状态"
 ```json
 {
   "cookies": [],
+  "cookieCountOriginal": 20,
+  "cookieCountExported": 15,
+  "cookieFilteredOutCount": 5,
+  "cookieDomainAllowlist": ["taobao.com", "tmall.com"],
   "setCookieSnippet": "await page.setCookie(...cookies);"
 }
 ```
+
+说明：`cookies` 会按站点 `cookieDomainAllowlist` 过滤，避免把无关跨域 cookie 导出给自动化脚本。
 
 OpenClaw skill 说明见：
 

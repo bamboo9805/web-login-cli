@@ -28,15 +28,21 @@ description: 封装 web-login-cli 为 OpenClaw 可复用登录技能，支持按
 ```json
 {
   "cookies": [],
+  "cookieCountOriginal": 20,
+  "cookieCountExported": 15,
+  "cookieFilteredOutCount": 5,
+  "cookieDomainAllowlist": ["taobao.com", "tmall.com"],
   "setCookieSnippet": "await page.setCookie(...cookies);"
 }
 ```
+
+说明：会按站点 `cookieDomainAllowlist` 过滤导出 cookie。
 
 ### 3) status(site|url)
 
 - `node web-login-skill.js status --site <site>`
 
-输出：解析后的 `domain/loginUrl/supportsQr`、cookie 文件是否存在、修改时间、cookie 数量。
+输出：解析后的 `domain/loginUrl/supportsQr`、`successCriteria`、`detection`、`cookieDomainAllowlist`，以及 cookie 文件状态（存在性、修改时间、原始数量、allowlist 过滤后数量）。
 
 ### 4) clear(site|url)
 
@@ -62,8 +68,11 @@ description: 封装 web-login-cli 为 OpenClaw 可复用登录技能，支持按
 字段：
 
 - `loginUrl`：站点默认登录入口
-- `supportsQr`：是否支持扫码流程
+- `supportsQr`：是否支持扫码流程（true=优先扫码；false=账号密码/短信/2FA）
 - `aliases`：别名（站点 key/域名简写）
+- `detection`：登录入口、二维码切换/定位 selectors 与关键词
+- `successCriteria`：认证 cookie、登录成功 DOM/URL 规则
+- `cookieDomainAllowlist`：允许落盘/导出的 cookie 域名白名单
 
 ## 备注
 

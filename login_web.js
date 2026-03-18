@@ -163,6 +163,115 @@ const SITE_CONFIGS = {
   },
 };
 
+const SKILL_SITE_CONFIG_PATH = path.join(__dirname, 'src', 'skill', 'sites.json');
+
+function normalizeHostForConfig(rawValue) {
+  let value = String(rawValue || '').trim().toLowerCase();
+  value = value.replace(/^https?:\/\//, '');
+  value = value.replace(/^\.+/, '');
+  value = value.replace(/^www\./, '');
+  value = value.replace(/[/?#].*$/, '');
+  value = value.replace(/:\d+$/, '');
+  return value;
+}
+
+function normalizeStringArray(values) {
+  if (!Array.isArray(values)) {
+    return [];
+  }
+
+  const output = [];
+  const seen = new Set();
+  for (const item of values) {
+    const text = String(item || '').trim();
+    if (!text) {
+      continue;
+    }
+    const key = text.toLowerCase();
+    if (seen.has(key)) {
+      continue;
+    }
+    seen.add(key);
+    output.push(text);
+  }
+  return output;
+}
+
+function normalizeCookieAllowlist(value, fallbackDomain) {
+  const normalized = normalizeStringArray(value)
+    .map((item) => normalizeHostForConfig(item))
+    .filter(Boolean);
+
+  if (normalized.length > 0) {
+    return [...new Set(normalized)];
+  }
+
+  const fallback = normalizeHostForConfig(fallbackDomain);
+  return fallback ? [fallback] : [];
+}
+
+function mergeConfigArray(primary, fallback) {
+  const values = normalizeStringArray(primary);
+  if (values.length > 0) {
+    return values;
+  }
+  return normalizeStringArray(fallback);
+}
+
+function applySkillSiteConfigOverrides(targetConfigMap) {
+  if (!fs.existsSync(SKILL_SITE_CONFIG_PATH)) {
+    return;
+  }
+
+  let parsed;
+  try {
+    parsed = JSON.parse(fs.readFileSync(SKILL_SITE_CONFIG_PATH, 'utf8'));
+  } catch (error) {
+    console.warn(`⚠️  读取站点配置失败，继续使用内置配置: ${error.message}`);
+    return;
+  }
+
+  if (!parsed || typeof parsed !== 'object') {
+    return;
+  }
+
+  const entries = Object.entries(parsed);
+  for (const [key, siteMeta] of entries) {
+    if (!siteMeta || typeof siteMeta !== 'object') {
+      continue;
+    }
+
+    const domain = normalizeHostForConfig(siteMeta.domain || key);
+    if (!domain) {
+      continue;
+    }
+
+    const fallback = targetConfigMap[domain] || {};
+
+    const successCriteria = siteMeta.successCriteria || {};
+    const detection = siteMeta.detection || {};
+
+    targetConfigMap[domain] = {
+      ...fallback,
+      supportsQr: siteMeta.supportsQr !== undefined ? Boolean(siteMeta.supportsQr) : (fallback.supportsQr !== false),
+      authCookieName: successCriteria.authCookieName !== undefined
+        ? (successCriteria.authCookieName || null)
+        : (fallback.authCookieName || null),
+      loginIndicators: mergeConfigArray(successCriteria.loginIndicators, fallback.loginIndicators),
+      successUrlPatterns: mergeConfigArray(successCriteria.successUrlPatterns, fallback.successUrlPatterns),
+      cookieDomainAllowlist: normalizeCookieAllowlist(siteMeta.cookieDomainAllowlist, domain),
+      loginButtonKeywords: mergeConfigArray(detection.loginButtonKeywords, fallback.loginButtonKeywords),
+      qrTabKeywords: mergeConfigArray(detection.qrTabKeywords, fallback.qrTabKeywords),
+      qrHintKeywords: mergeConfigArray(detection.qrHintKeywords, fallback.qrHintKeywords),
+      loginModalSelectors: mergeConfigArray(detection.loginModalSelectors, fallback.loginModalSelectors),
+      qrCodeSelectors: mergeConfigArray(detection.qrCodeSelectors, fallback.qrCodeSelectors),
+      qrSwitchSelectors: mergeConfigArray(detection.qrSwitchSelectors, fallback.qrSwitchSelectors),
+    };
+  }
+}
+
+applySkillSiteConfigOverrides(SITE_CONFIGS);
+
 const LOGIN_BUTTON_KEYWORDS = [
   '登录',
   '登錄',
@@ -744,6 +853,11 @@ async function autoHandleLoginEntry(page, domain, config = {}) {
   }
   await new Promise((resolve) => setTimeout(resolve, 1500));
 
+  if (config.supportsQr === false) {
+    console.log('ℹ️  当前站点 supportsQr=false，跳过二维码流程，请继续账号密码/短信/2FA 登录。');
+    return null;
+  }
+
   let switched;
   try {
     switched = await trySwitchToQrTab(page, qrTabKeywords, qrSwitchSelectors);
@@ -808,39 +922,102 @@ function extractDomain(targetUrl) {
  * 获取网站配置
  */
 function getSiteConfig(domain) {
-  // 移除 www. 前缀
-  const cleanDomain = domain.replace(/^www\./, '');
+  const cleanDomain = normalizeHostForConfig(domain);
 
-  // 精确匹配
   if (SITE_CONFIGS[cleanDomain]) {
-    return SITE_CONFIGS[cleanDomain];
+    const exact = SITE_CONFIGS[cleanDomain];
+    return {
+      ...exact,
+      supportsQr: exact.supportsQr !== false,
+      cookieDomainAllowlist: normalizeCookieAllowlist(exact.cookieDomainAllowlist, cleanDomain),
+      successUrlPatterns: normalizeStringArray(exact.successUrlPatterns),
+    };
   }
 
-  // 部分匹配（例如：www.instagram.com 匹配 instagram.com）
   for (const [key, config] of Object.entries(SITE_CONFIGS)) {
-    if (cleanDomain.includes(key) || key.includes(cleanDomain)) {
-      return config;
+    if (cleanDomain === key || cleanDomain.endsWith(`.${key}`) || key.endsWith(`.${cleanDomain}`)) {
+      return {
+        ...config,
+        supportsQr: config.supportsQr !== false,
+        cookieDomainAllowlist: normalizeCookieAllowlist(config.cookieDomainAllowlist, key),
+        successUrlPatterns: normalizeStringArray(config.successUrlPatterns),
+      };
     }
   }
 
-  // 返回默认配置
   return {
-    authCookieName: null, // 不强制要求特定 cookie
+    supportsQr: false,
+    authCookieName: null,
     loginIndicators: [],
+    successUrlPatterns: [],
+    cookieDomainAllowlist: normalizeCookieAllowlist([], cleanDomain),
+  };
+}
+
+function normalizeCookieDomain(rawDomain) {
+  return normalizeHostForConfig(rawDomain);
+}
+
+function isCookieDomainAllowed(cookieDomain, allowlist) {
+  const normalizedCookieDomain = normalizeCookieDomain(cookieDomain);
+  if (!normalizedCookieDomain) {
+    return false;
+  }
+
+  for (const allow of allowlist) {
+    if (!allow) {
+      continue;
+    }
+    if (normalizedCookieDomain === allow || normalizedCookieDomain.endsWith(`.${allow}`)) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+function filterCookiesByAllowlist(cookies, allowlist, fallbackDomain) {
+  const normalizedAllowlist = normalizeCookieAllowlist(allowlist, fallbackDomain);
+  const source = Array.isArray(cookies) ? cookies : [];
+  if (!normalizedAllowlist.length) {
+    return {
+      cookies: source,
+      allowlist: [],
+      filteredOutCount: 0,
+    };
+  }
+
+  const filteredCookies = source.filter((cookie) => isCookieDomainAllowed(cookie?.domain, normalizedAllowlist));
+  return {
+    cookies: filteredCookies,
+    allowlist: normalizedAllowlist,
+    filteredOutCount: Math.max(0, source.length - filteredCookies.length),
   };
 }
 
 /**
  * 保存 cookies 到文件（基于域名）
  */
-function saveCookies(cookies, domain) {
+function saveCookies(cookies, domain, config = {}) {
   const filename = `cookies-${domain.replace(/\./g, '-')}.json`;
   const cookieFile = path.join(SESSION_DIR, filename);
 
-  fs.writeFileSync(cookieFile, JSON.stringify(cookies, null, 2));
-  console.log(`✅ Cookies 已保存到: ${cookieFile}`);
+  const filtered = filterCookiesByAllowlist(cookies, config.cookieDomainAllowlist, domain);
+  fs.writeFileSync(cookieFile, JSON.stringify(filtered.cookies, null, 2));
 
-  return cookieFile;
+  console.log(`✅ Cookies 已保存到: ${cookieFile}`);
+  console.log(`   Cookie Allowlist: ${filtered.allowlist.join(', ') || '(none)'}`);
+  if (filtered.filteredOutCount > 0) {
+    console.log(`   已过滤跨域 Cookies: ${filtered.filteredOutCount}`);
+  }
+
+  return {
+    cookieFile,
+    allowlist: filtered.allowlist,
+    savedCount: filtered.cookies.length,
+    originalCount: Array.isArray(cookies) ? cookies.length : 0,
+    filteredOutCount: filtered.filteredOutCount,
+  };
 }
 
 /**
@@ -890,6 +1067,23 @@ async function detectLoginStatus(page, targetUrl, config) {
   // 方法 2: URL 变化检测
   console.log('⚠️  未找到认证 cookie，尝试 URL 变化检测...');
   const currentUrl = page.url();
+  const successUrlPatterns = normalizeStringArray(config.successUrlPatterns);
+  if (successUrlPatterns.length > 0) {
+    const lowerCurrentUrl = String(currentUrl || '').toLowerCase();
+    const matchedPattern = successUrlPatterns.find((pattern) =>
+      lowerCurrentUrl.includes(String(pattern || '').toLowerCase()),
+    );
+    if (matchedPattern) {
+      console.log(`✓ URL 命中成功规则: ${matchedPattern}`);
+      return {
+        success: true,
+        method: 'url-pattern',
+        url: currentUrl,
+        pattern: matchedPattern,
+      };
+    }
+  }
+
   if (currentUrl !== targetUrl && currentUrl.includes(domain)) {
     console.log(`✓ URL 已变化: ${currentUrl}`);
     return {
@@ -964,7 +1158,11 @@ async function login(targetUrl, options = {}) {
     if (config.authCookieName) {
       console.log(`🔑 认证 Cookie: ${config.authCookieName}`);
     } else {
-      console.log(`🔑 认证方式: 通用检测`);
+      console.log('🔑 认证方式: 通用检测');
+    }
+    console.log(`🧭 supportsQr: ${config.supportsQr !== false}`);
+    if (Array.isArray(config.cookieDomainAllowlist) && config.cookieDomainAllowlist.length > 0) {
+      console.log(`🍪 Cookie Allowlist: ${config.cookieDomainAllowlist.join(', ')}`);
     }
     console.log('');
 
@@ -1042,8 +1240,8 @@ async function login(targetUrl, options = {}) {
     console.log('🍪 提取 session cookies...\n');
     const cookies = await page.cookies();
 
-    // 保存 cookies
-    saveCookies(cookies, domain);
+    // 保存 cookies（按 allowlist 过滤）
+    const savedCookies = saveCookies(cookies, domain, config);
 
     // 保存浏览器连接信息
     const browserInfo = {
@@ -1066,7 +1264,11 @@ async function login(targetUrl, options = {}) {
     console.log('  Session 信息:');
     console.log('═══════════════════════════════════════════════════════');
     console.log(`  网站: ${domain}`);
-    console.log(`  Cookies 数量: ${cookies.length}`);
+    console.log(`  Cookies 原始数量: ${savedCookies.originalCount}`);
+    console.log(`  Cookies 保存数量: ${savedCookies.savedCount}`);
+    if (savedCookies.filteredOutCount > 0) {
+      console.log(`  Cookies 过滤数量: ${savedCookies.filteredOutCount}`);
+    }
     if (loginStatus.method === 'cookie' || loginStatus.method === 'cookie-guess') {
       if (loginStatus.cookieName) {
         console.log(`  认证 Cookie: ${loginStatus.cookieName}`);

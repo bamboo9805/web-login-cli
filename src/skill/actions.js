@@ -63,6 +63,68 @@ function parsePort(value) {
   return String(parsed);
 }
 
+function normalizeCookieDomain(rawDomain) {
+  let value = String(rawDomain || '').trim().toLowerCase();
+  if (!value) {
+    return '';
+  }
+  value = value.replace(/^\.+/, '');
+  value = value.replace(/^www\./, '');
+  value = value.replace(/:\d+$/, '');
+  return value;
+}
+
+function normalizeAllowlist(allowlist, fallbackDomain) {
+  const normalized = Array.isArray(allowlist)
+    ? allowlist.map((item) => normalizeCookieDomain(item)).filter(Boolean)
+    : [];
+
+  if (normalized.length > 0) {
+    return [...new Set(normalized)];
+  }
+
+  const fallback = normalizeCookieDomain(fallbackDomain);
+  return fallback ? [fallback] : [];
+}
+
+function isCookieAllowed(cookieDomain, allowlist) {
+  const normalizedCookieDomain = normalizeCookieDomain(cookieDomain);
+  if (!normalizedCookieDomain) {
+    return false;
+  }
+
+  for (const allow of allowlist) {
+    if (!allow) {
+      continue;
+    }
+    if (normalizedCookieDomain === allow || normalizedCookieDomain.endsWith(`.${allow}`)) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+function filterCookiesByAllowlist(cookies, allowlist, fallbackDomain) {
+  const normalizedAllowlist = normalizeAllowlist(allowlist, fallbackDomain);
+  if (!normalizedAllowlist.length) {
+    return {
+      cookies: Array.isArray(cookies) ? cookies : [],
+      allowlist: [],
+      filteredOutCount: 0,
+    };
+  }
+
+  const source = Array.isArray(cookies) ? cookies : [];
+  const filtered = source.filter((cookie) => isCookieAllowed(cookie?.domain, normalizedAllowlist));
+
+  return {
+    cookies: filtered,
+    allowlist: normalizedAllowlist,
+    filteredOutCount: Math.max(0, source.length - filtered.length),
+  };
+}
+
 function login(siteOrUrl, options = {}) {
   ensureRequiredDependencies();
 
@@ -83,7 +145,10 @@ function login(siteOrUrl, options = {}) {
     const child = spawn(process.execPath, args, {
       cwd: ROOT_DIR,
       stdio: 'inherit',
-      env: process.env,
+      env: {
+        ...process.env,
+        WEB_LOGIN_SITE_HINT: resolved.site || '',
+      },
     });
 
     child.once('error', reject);
@@ -109,8 +174,14 @@ function exportAction(siteOrUrl, format = 'puppeteer', options = {}) {
   const resolved = resolveSiteOrUrl(siteOrUrl, options);
   const { cookies } = loadCookiesForDomain(resolved.domain);
 
+  const filtered = filterCookiesByAllowlist(cookies, resolved.cookieDomainAllowlist, resolved.domain);
+
   return {
-    cookies,
+    cookies: filtered.cookies,
+    cookieCountOriginal: cookies.length,
+    cookieCountExported: filtered.cookies.length,
+    cookieFilteredOutCount: filtered.filteredOutCount,
+    cookieDomainAllowlist: filtered.allowlist,
     setCookieSnippet: 'await page.setCookie(...cookies);',
   };
 }
@@ -124,6 +195,7 @@ function status(siteOrUrl, options = {}) {
   let cookieFileExists = false;
   let cookieMtime = null;
   let cookieCount = 0;
+  let cookieCountAfterAllowlist = 0;
 
   if (fs.existsSync(cookieFile)) {
     cookieFileExists = true;
@@ -134,9 +206,15 @@ function status(siteOrUrl, options = {}) {
       const parsed = JSON.parse(fs.readFileSync(cookieFile, 'utf8'));
       if (Array.isArray(parsed)) {
         cookieCount = parsed.length;
+        cookieCountAfterAllowlist = filterCookiesByAllowlist(
+          parsed,
+          resolved.cookieDomainAllowlist,
+          resolved.domain,
+        ).cookies.length;
       }
     } catch (_error) {
       cookieCount = 0;
+      cookieCountAfterAllowlist = 0;
     }
   }
 
@@ -145,10 +223,14 @@ function status(siteOrUrl, options = {}) {
     domain: resolved.domain,
     loginUrl: resolved.loginUrl,
     supportsQr: resolved.supportsQr,
+    cookieDomainAllowlist: normalizeAllowlist(resolved.cookieDomainAllowlist, resolved.domain),
+    successCriteria: resolved.successCriteria,
+    detection: resolved.detection,
     cookieFile,
     cookieFileExists,
     cookieMtime,
     cookieCount,
+    cookieCountAfterAllowlist,
   };
 }
 

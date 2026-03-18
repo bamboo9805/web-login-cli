@@ -34,11 +34,23 @@
 - `aliases` 做多别名映射（如 `tb` -> `taobao`）。
 - 通过域名匹配把 URL 自动映射到已知站点。
 
-4) **安全清理策略**：
+4) **配置化站点清单（Issue #1 补齐）**：
+- `src/skill/sites.json` 统一承载：
+  - `supportsQr`
+  - `detection`（selector/关键词）
+  - `successCriteria`（认证 cookie、成功 URL/DOM）
+  - `cookieDomainAllowlist`
+- `login_web.js` 启动时读取并覆盖内置配置，支持“配置驱动”扩展。
+
+5) **Cookie 域名白名单策略**：
+- 登录落盘和 `export` 都按 `cookieDomainAllowlist` 过滤。
+- 防止把无关跨域 cookie 导出到 Puppeteer 自动化脚本。
+
+6) **安全清理策略**：
 - `clear` 必须带 `--yes`。
 - 只删除目标域名 cookie/QR 相关文件，避免误删全局文件。
 
-5) **自然语言解析策略**：
+7) **自然语言解析策略**：
 - 支持显式 chat：`node web-login-skill.js chat "帮我登录淘宝并导出 cookies"`。
 - 支持隐式 chat：`node web-login-skill.js "帮我查看淘宝状态"`。
 - 支持动作识别：登录 / 状态 / 导出 / 清理，并可在一句话组合多个动作按顺序执行。
@@ -52,9 +64,11 @@
 - 新增 OpenClaw 友好 CLI：`web-login-skill.js`
 - 新增一句话自然语言入口：`chat`（含隐式 chat）
 - 新增自然语言意图解析器：`src/skill/chat-intent.js`
-- 新增站点能力配置：`src/skill/sites.json`
+- 新增站点能力配置：`src/skill/sites.json`（supportsQr/detection/successCriteria/cookieDomainAllowlist）
 - 新增解析器：`src/skill/site-resolver.js`
 - 新增动作层：`src/skill/actions.js`
+- 更新 `login_web.js`：读取配置化站点清单，并按 `supportsQr` 区分流程
+- 更新 cookies 落盘与导出：按 `cookieDomainAllowlist` 过滤
 - 新增 Skill 文档：`openclaw-skill/SKILL.md`
 - 更新 `package.json`：加入 `web-login-skill` bin 与 `check` 校验脚本
 - 更新 `README.md`：补充 OpenClaw Skill Wrapper 使用说明
@@ -62,8 +76,8 @@
 ### 2.2 可复用结果
 - 可以用统一命令管理登录会话，不再手动拼接不同脚本。
 - 可以一句话触发动作链，不需要记 `login/export/status/clear` 细节命令。
-- `export` 可以直接给 Puppeteer 注入 cookies。
-- `status` 方便做“是否已登录”的自动检查。
+- `export` 可以直接给 Puppeteer 注入 cookies，并自动做 allowlist 过滤。
+- `status` 方便做“是否已登录”的自动检查，并可查看 successCriteria/detection/allowlist。
 
 ### 2.3 验证结果
 - 已执行：`npm run check`（语法检查通过）
