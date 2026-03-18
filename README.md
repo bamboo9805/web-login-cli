@@ -212,7 +212,16 @@ node web-login-skill.js status --site taobao
 
 # 安全清理（仅清理目标域名相关文件，需确认）
 node web-login-skill.js clear --site taobao --yes
+
+# 一句话模式（显式 chat）
+node web-login-skill.js chat "帮我登录淘宝并导出 cookies"
+
+# 一句话模式（隐式 chat，不写命令）
+node web-login-skill.js "帮我查看淘宝登录状态"
 ```
+
+一句话模式支持识别动作：`登录` / `状态` / `导出` / `清理`。
+可在一句话中组合多个动作（例如“登录并导出”）；会按句子顺序执行。
 
 `export --format puppeteer` 返回 JSON：
 

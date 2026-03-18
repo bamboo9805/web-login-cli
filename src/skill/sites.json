@@ -5,6 +5,7 @@
     "supportsQr": true,
     "aliases": [
       "tb",
+      "淘宝",
       "taobao.com",
       "www.taobao.com"
     ]
@@ -15,6 +16,7 @@
     "supportsQr": true,
     "aliases": [
       "xianyu",
+      "闲鱼",
       "goofish.com",
       "www.goofish.com"
     ]
@@ -24,6 +26,7 @@
     "loginUrl": "https://www.douyin.com",
     "supportsQr": true,
     "aliases": [
+      "抖音",
       "douyin.com",
       "www.douyin.com"
     ]
@@ -34,6 +37,7 @@
     "supportsQr": true,
     "aliases": [
       "xiecheng",
+      "携程",
       "ctrip.com",
       "flights.ctrip.com"
     ]
@@ -52,6 +56,7 @@
     "loginUrl": "https://www.instagram.com/accounts/login/",
     "supportsQr": false,
     "aliases": [
+      "ins",
       "instagram.com",
       "www.instagram.com"
     ]

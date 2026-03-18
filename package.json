@@ -11,7 +11,7 @@
     "start": "node login_web.js",
     "login:web": "node login_web.js",
     "login:skill": "node web-login-skill.js",
-    "check": "node --check login_web.js && node --check web-login-skill.js && node --check qr-monitor-server.js && node --check qr-monitor-mcp-server.js && node --check qr-dashboard-server.js && node --check src/qr/monitor-core.js && node --check src/mcp/qr-monitor-mcp.js && node --check src/skill/site-resolver.js && node --check src/skill/actions.js",
+    "check": "node --check login_web.js && node --check web-login-skill.js && node --check qr-monitor-server.js && node --check qr-monitor-mcp-server.js && node --check qr-dashboard-server.js && node --check src/qr/monitor-core.js && node --check src/mcp/qr-monitor-mcp.js && node --check src/skill/site-resolver.js && node --check src/skill/actions.js && node --check src/skill/chat-intent.js",
     "qr:monitor": "node qr-monitor-server.js",
     "mcp:qr": "node qr-monitor-mcp-server.js",
     "qr:dashboard": "node qr-dashboard-server.js"

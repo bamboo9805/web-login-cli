@@ -23,6 +23,7 @@
 - `export`：导出 cookies（puppeteer 格式）
 - `status`：查看会话状态
 - `clear`：按域名清理会话文件
+- `chat`：一句话自然语言解析并执行动作链
 
 2) **站点能力模型**（`supportsQr`）：
 - 对不同站点配置 `supportsQr=true/false`。
@@ -37,12 +38,20 @@
 - `clear` 必须带 `--yes`。
 - 只删除目标域名 cookie/QR 相关文件，避免误删全局文件。
 
+5) **自然语言解析策略**：
+- 支持显式 chat：`node web-login-skill.js chat "帮我登录淘宝并导出 cookies"`。
+- 支持隐式 chat：`node web-login-skill.js "帮我查看淘宝状态"`。
+- 支持动作识别：登录 / 状态 / 导出 / 清理，并可在一句话组合多个动作按顺序执行。
+- 清理动作默认安全保护：需 `--yes` 或句子里包含“确认/确定/yes/confirm”。
+
 ---
 
 ## 2. 本次修改方案（我做了什么）
 
 ### 2.1 新增能力
 - 新增 OpenClaw 友好 CLI：`web-login-skill.js`
+- 新增一句话自然语言入口：`chat`（含隐式 chat）
+- 新增自然语言意图解析器：`src/skill/chat-intent.js`
 - 新增站点能力配置：`src/skill/sites.json`
 - 新增解析器：`src/skill/site-resolver.js`
 - 新增动作层：`src/skill/actions.js`
@@ -52,6 +61,7 @@
 
 ### 2.2 可复用结果
 - 可以用统一命令管理登录会话，不再手动拼接不同脚本。
+- 可以一句话触发动作链，不需要记 `login/export/status/clear` 细节命令。
 - `export` 可以直接给 Puppeteer 注入 cookies。
 - `status` 方便做“是否已登录”的自动检查。
 
@@ -81,12 +91,21 @@ node web-login-skill.js status --site taobao
 node web-login-skill.js clear --site taobao --yes
 ```
 
-### 3.2 npm/npx 用法
+### 3.2 一句话模式（推荐）
+```bash
+# 显式 chat
+node web-login-skill.js chat "帮我登录淘宝并导出 cookies"
+
+# 隐式 chat（不用记命令）
+node web-login-skill.js "帮我查看淘宝登录状态"
+```
+
+### 3.3 npm/npx 用法
 ```bash
 npx web-login-skill status --site taobao
 ```
 
-### 3.3 Skill 打包产物
+### 3.4 Skill 打包产物
 - 打包文件：`dist/openclaw-skill.skill`
 - 说明文件：`openclaw-skill/SKILL.md`
 

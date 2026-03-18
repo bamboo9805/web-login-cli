@@ -3,17 +3,20 @@
 'use strict';
 
 const actions = require('./src/skill/actions');
+const { parseChatIntent } = require('./src/skill/chat-intent');
 
-const SUPPORTED_COMMANDS = new Set(['login', 'export', 'status', 'clear']);
+const SUPPORTED_COMMANDS = new Set(['login', 'export', 'status', 'clear', 'chat']);
 
 function printUsage() {
   console.log('Usage: node web-login-skill.js <command> [options]');
+  console.log('   or: node web-login-skill.js "自然语言一句话"');
   console.log('');
   console.log('Commands:');
   console.log('  login    Launch existing interactive login flow');
   console.log('  export   Export saved cookies for automation');
   console.log('  status   Inspect saved cookies/session metadata');
   console.log('  clear    Remove domain-scoped session artifacts');
+  console.log('  chat     Parse one natural-language sentence and run actions');
   console.log('');
   console.log('Target selectors (use one):');
   console.log('  --site <site-key-or-alias>');
@@ -21,9 +24,9 @@ function printUsage() {
   console.log('');
   console.log('Examples:');
   console.log('  node web-login-skill.js login --site taobao');
-  console.log('  node web-login-skill.js login --url https://example.com');
   console.log('  node web-login-skill.js export --site taobao --format puppeteer');
-  console.log('  node web-login-skill.js status --site taobao');
+  console.log('  node web-login-skill.js chat "帮我登录淘宝并导出 cookies"');
+  console.log('  node web-login-skill.js "帮我登录淘宝并导出 cookies"');
   console.log('  node web-login-skill.js clear --site taobao --yes');
 }
 
@@ -32,6 +35,7 @@ function parseArgs(argv) {
     command: '',
     site: '',
     url: '',
+    text: '',
     format: 'puppeteer',
     yes: false,
     debugPort: '',
@@ -45,9 +49,19 @@ function parseArgs(argv) {
     return result;
   }
 
-  result.command = String(argv[0] || '').trim().toLowerCase();
+  const firstArg = String(argv[0] || '').trim();
+  const firstCommand = firstArg.toLowerCase();
 
-  for (let i = 1; i < argv.length; i += 1) {
+  let startIndex = 0;
+  if (SUPPORTED_COMMANDS.has(firstCommand)) {
+    result.command = firstCommand;
+    startIndex = 1;
+  } else {
+    result.command = 'chat';
+    startIndex = 0;
+  }
+
+  for (let i = startIndex; i < argv.length; i += 1) {
     const arg = argv[i];
     if (arg === '--help' || arg === '-h') {
       result.help = true;
@@ -75,6 +89,18 @@ function parseArgs(argv) {
     }
     if (arg.startsWith('--url=')) {
       result.url = arg.slice('--url='.length);
+      continue;
+    }
+    if (arg === '--text') {
+      result.text = argv[i + 1] || '';
+      if (!result.text) {
+        throw new Error('Missing value for --text');
+      }
+      i += 1;
+      continue;
+    }
+    if (arg.startsWith('--text=')) {
+      result.text = arg.slice('--text='.length);
       continue;
     }
     if (arg === '--format') {
@@ -148,9 +174,86 @@ function printJson(payload) {
   process.stdout.write(`${JSON.stringify(payload, null, 2)}\n`);
 }
 
+async function executeAction(actionName, targetInput, parsed, resolverOptions, intent = null) {
+  if (actionName === 'login') {
+    return actions.login(targetInput, {
+      ...resolverOptions,
+      debugPort: parsed.debugPort,
+      chromePath: parsed.chromePath,
+    });
+  }
+
+  if (actionName === 'export') {
+    return actions.export(targetInput, parsed.format, resolverOptions);
+  }
+
+  if (actionName === 'status') {
+    return actions.status(targetInput, resolverOptions);
+  }
+
+  if (actionName === 'clear') {
+    return actions.clear(targetInput, {
+      ...resolverOptions,
+      yes: Boolean(parsed.yes || (intent && intent.clearConfirmed)),
+    });
+  }
+
+  throw new Error(`Unsupported action: ${actionName}`);
+}
+
+async function runChatCommand(parsed) {
+  const text = String(parsed.text || parsed.positional.join(' ')).trim();
+  if (!text) {
+    throw new Error('chat command requires sentence text (or use implicit chat mode)');
+  }
+
+  const intent = parseChatIntent(text, {
+    site: parsed.site,
+    url: parsed.url,
+  });
+
+  const targetInput = intent.site || intent.url;
+  if (!targetInput) {
+    throw new Error('无法识别目标站点，请在句子里写站点名/URL，或显式传 --site/--url');
+  }
+
+  const resolverOptions = {
+    site: intent.site,
+    url: intent.url,
+  };
+
+  const steps = [];
+  for (const actionName of intent.actions) {
+    const result = await executeAction(actionName, targetInput, parsed, resolverOptions, intent);
+    steps.push({ action: actionName, result });
+
+    if (actionName === 'login' && result && result.exitCode && result.exitCode !== 0) {
+      break;
+    }
+  }
+
+  return {
+    mode: 'chat',
+    text,
+    interpreted: {
+      actions: intent.actions,
+      site: intent.site || null,
+      url: intent.url || null,
+      clearConfirmed: Boolean(intent.clearConfirmed),
+    },
+    steps,
+  };
+}
+
 async function runCommand(parsed) {
   if (!SUPPORTED_COMMANDS.has(parsed.command)) {
     throw new Error(`Unknown command: ${parsed.command || '(empty)'}`);
+  }
+
+  if (parsed.command === 'chat') {
+    const payload = await runChatCommand(parsed);
+    printJson(payload);
+    return;
   }
 
   const targetInput = pickTargetInput(parsed);
@@ -166,37 +269,11 @@ async function runCommand(parsed) {
     url: parsed.url,
   };
 
-  if (parsed.command === 'login') {
-    const result = await actions.login(targetInput, {
-      ...resolverOptions,
-      debugPort: parsed.debugPort,
-      chromePath: parsed.chromePath,
-    });
-    printJson(result);
-    if (result.exitCode && result.exitCode !== 0) {
-      process.exit(result.exitCode);
-    }
-    return;
-  }
+  const result = await executeAction(parsed.command, targetInput, parsed, resolverOptions, null);
+  printJson(result);
 
-  if (parsed.command === 'export') {
-    const result = actions.export(targetInput, parsed.format, resolverOptions);
-    printJson(result);
-    return;
-  }
-
-  if (parsed.command === 'status') {
-    const result = actions.status(targetInput, resolverOptions);
-    printJson(result);
-    return;
-  }
-
-  if (parsed.command === 'clear') {
-    const result = actions.clear(targetInput, {
-      ...resolverOptions,
-      yes: parsed.yes,
-    });
-    printJson(result);
+  if (parsed.command === 'login' && result.exitCode && result.exitCode !== 0) {
+    process.exit(result.exitCode);
   }
 }
 
