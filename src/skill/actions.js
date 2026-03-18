@@ -9,6 +9,16 @@ const ROOT_DIR = path.resolve(__dirname, '..', '..');
 const SESSION_DIR = path.join(ROOT_DIR, '.web-login-cli', 'sessions');
 const LOGIN_SCRIPT = path.join(ROOT_DIR, 'login_web.js');
 
+function ensureRequiredDependencies() {
+  try {
+    require.resolve('puppeteer', { paths: [ROOT_DIR] });
+  } catch (_error) {
+    throw new Error(
+      'Missing dependency: puppeteer. Please run `npm install` in the project root first.',
+    );
+  }
+}
+
 function ensureSessionDir() {
   if (!fs.existsSync(SESSION_DIR)) {
     fs.mkdirSync(SESSION_DIR, { recursive: true });
@@ -54,6 +64,8 @@ function parsePort(value) {
 }
 
 function login(siteOrUrl, options = {}) {
+  ensureRequiredDependencies();
+
   const resolved = resolveSiteOrUrl(siteOrUrl, options);
   const args = [LOGIN_SCRIPT, resolved.loginUrl];
 
