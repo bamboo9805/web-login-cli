@@ -1255,6 +1255,7 @@ class QRMonitorManager extends EventEmitter {
 module.exports = {
   QRMonitorSession,
   QRMonitorManager,
+  getSiteKeywords,
   parsePort,
   toFileSafeToken,
   buildDefaultQrFilename,

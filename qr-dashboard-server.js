@@ -18,10 +18,11 @@ const SESSION_TTL_MS = Number(process.env.QR_DASHBOARD_SESSION_TTL_MS || 5 * 60 
 const DEFAULT_DOMAIN = String(process.env.QR_DASHBOARD_DEFAULT_DOMAIN || 'jd.com').trim().toLowerCase();
 const USER_AGENT =
   'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36';
-const BROWSER_HEADLESS = (() => {
-  const value = String(process.env.QR_DASHBOARD_HEADLESS || '1').trim().toLowerCase();
+function resolveHeadlessMode(rawValue = process.env.QR_DASHBOARD_HEADLESS || '1') {
+  const value = String(rawValue).trim().toLowerCase();
   return ['0', 'false', 'no'].includes(value) ? false : 'new';
-})();
+}
+const BROWSER_HEADLESS = resolveHeadlessMode();
 
 const LOCAL_CHROME_CANDIDATES = {
   darwin: ['/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'],
@@ -382,7 +383,7 @@ async function main() {
   console.log('');
 
   const chromePath = detectLocalChromeExecutable();
-  const headless = BROWSER_HEADLESS();
+  const headless = BROWSER_HEADLESS;
   const browserArgs = chromePath
     ? [`--no-sandbox`, `--disable-setuid-sandbox`, `--headless=${headless}`, `--user-agent=${USER_AGENT}`]
     : [`--no-sandbox`, `--disable-setuid-sandbox`, `--headless=${headless}`, `--user-agent=${USER_AGENT}`];
@@ -422,6 +423,14 @@ async function main() {
   console.log('  QR_DASHBOARD_DEFAULT_DOMAIN=jd.com   # Default domain');
   console.log('');
 }
+
+module.exports = {
+  normalizeDomain,
+  assertDomain,
+  resolveTargetUrl,
+  resolveHeadlessMode,
+  TARGET_URL_OVERRIDES,
+};
 
 if (require.main === module) {
   main();

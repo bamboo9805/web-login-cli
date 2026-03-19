@@ -1256,4 +1256,4 @@ if (require.main === module) {
   main();
 }
 
-module.exports = { login };
+module.exports = { login, SITE_CONFIGS };
