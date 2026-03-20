@@ -1016,6 +1016,13 @@ async function login(targetUrl, options = {}) {
 
     console.log('⏳ 等待你完成登录...\n');
 
+    // 非交互模式（如 OpenClaw detached 启动）下，不等待回车，直接保活浏览器供二维码监控使用
+    if (!process.stdin.isTTY) {
+      console.log('ℹ️ 检测到非交互模式，跳过回车确认与登录态校验，保持浏览器长连...\n');
+      await keepProcessAlive(browser);
+      return;
+    }
+
     // 等待用户按 Enter
     await waitForEnter();
 
