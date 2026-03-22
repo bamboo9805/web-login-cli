@@ -22,6 +22,24 @@ const LOCAL_CHROME_CANDIDATES = {
   linux: ['/usr/bin/google-chrome', '/usr/bin/google-chrome-stable', '/usr/bin/chromium-browser', '/usr/bin/chromium'],
 };
 
+const JD_LOGIN_TARGET_FALLBACKS = [
+  'https://passport.jd.com/new/login.aspx',
+  'https://plogin.m.jd.com/cgi-bin/m/login/login?appid=300&returnurl=https%3A%2F%2Fm.jd.com%2F',
+  'https://plogin.jd.com/login/login',
+];
+
+const JD_LOGIN_HOST_ALLOWLIST = [
+  'jd.com',
+  'www.jd.com',
+  'm.jd.com',
+  'passport.jd.com',
+  'plogin.m.jd.com',
+  'plogin.jd.com',
+  'qr.m.jd.com',
+];
+
+const JD_AUTH_COOKIE_CANDIDATES = ['pt_key', 'pt_pin', 'thor', 'pin'];
+
 // 网站配置
 const SITE_CONFIGS = {
   'instagram.com': {
@@ -142,10 +160,27 @@ const SITE_CONFIGS = {
   },
   'jd.com': {
     authCookieName: null,
-    loginIndicators: [],
-    loginButtonKeywords: [],
-    qrTabKeywords: [],
-    qrHintKeywords: ['扫码', '二维码'],
+    authCookieCandidates: JD_AUTH_COOKIE_CANDIDATES,
+    loginIndicators: [
+      '#ttbar-login .nickname',
+      '#ttbar-login [class*="nickname"]',
+      '.userinfo .u-name',
+      '.user-name',
+      '.link-logout',
+      'a[href*="home.jd.com"]',
+      'a[href*="order.jd.com"]',
+    ],
+    loginButtonKeywords: ['登录', '请登录', '你好，请登录', '登录/注册', '立即登录'],
+    loginEntrySelectors: [
+      '.link-login',
+      '#ttbar-login .link-login',
+      '.login-btn',
+      '.J_login',
+      'a[href*="passport.jd.com/new/login.aspx"]',
+      'a[href*="passport.jd.com"]',
+    ],
+    qrTabKeywords: ['扫码登录', '二维码登录', '手机扫码登录', '扫码'],
+    qrHintKeywords: ['扫码', '二维码', '京东', 'jd'],
     loginModalSelectors: [
       '.qrcode-login',
       '.login-form-border',
@@ -160,6 +195,21 @@ const SITE_CONFIGS = {
       'img[src*="qr.m.jd.com/show"]'
     ],
     qrSwitchSelectors: [],
+    loginTargetFallbacks: JD_LOGIN_TARGET_FALLBACKS,
+    loginHostAllowlist: JD_LOGIN_HOST_ALLOWLIST,
+    loginVerificationMarkers: {
+      cookieNames: JD_AUTH_COOKIE_CANDIDATES,
+      loginHosts: ['passport.jd.com', 'plogin.m.jd.com', 'plogin.jd.com'],
+      loginPathPatterns: ['/new/login', '/login/login', '/cgi-bin/m/login/login'],
+      domIndicators: [
+        '#ttbar-login .nickname',
+        '#ttbar-login [class*="nickname"]',
+        '.userinfo .u-name',
+        '.user-name',
+        '.link-logout',
+      ],
+      successUrlPatterns: ['home.jd.com', 'order.jd.com', 'cart.jd.com', 'jd.com/member'],
+    },
   },
 };
 
@@ -215,6 +265,121 @@ function detectLocalChromeExecutable() {
     }
   }
   return '';
+}
+
+function normalizeHost(rawValue) {
+  return String(rawValue || '')
+    .trim()
+    .toLowerCase()
+    .replace(/^https?:\/\//, '')
+    .replace(/^\.+/, '')
+    .replace(/:\d+$/, '')
+    .replace(/[/?#].*$/, '');
+}
+
+function isHostAllowed(host, allowlist = []) {
+  const normalizedHost = normalizeHost(host);
+  if (!normalizedHost) {
+    return false;
+  }
+  for (const item of allowlist) {
+    const normalized = normalizeHost(item);
+    if (!normalized) {
+      continue;
+    }
+    if (normalizedHost === normalized || normalizedHost.endsWith(`.${normalized}`)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function isJdDomain(host) {
+  return isHostAllowed(host, ['jd.com']);
+}
+
+function toTelemetryPayload(payload = {}) {
+  return Object.entries(payload)
+    .filter(([, value]) => value !== undefined && value !== null && value !== '')
+    .map(([key, value]) => `${key}=${String(value).replace(/\s+/g, ' ').slice(0, 180)}`)
+    .join(' ');
+}
+
+function logTelemetry(event, payload = {}) {
+  const suffix = toTelemetryPayload(payload);
+  if (suffix) {
+    console.log(`[telemetry] ${event} ${suffix}`);
+    return;
+  }
+  console.log(`[telemetry] ${event}`);
+}
+
+function getLoginTargetCandidates(targetUrl, config = {}) {
+  const candidates = [];
+  const pushCandidate = (value) => {
+    const normalized = String(value || '').trim();
+    if (!normalized) {
+      return;
+    }
+    if (candidates.includes(normalized)) {
+      return;
+    }
+    candidates.push(normalized);
+  };
+
+  pushCandidate(targetUrl);
+  for (const fallback of config.loginTargetFallbacks || []) {
+    pushCandidate(fallback);
+  }
+  return candidates;
+}
+
+async function navigateWithFallback(page, targetUrl, config = {}) {
+  const candidates = getLoginTargetCandidates(targetUrl, config);
+  let lastError = null;
+
+  for (const candidate of candidates) {
+    try {
+      await page.goto(candidate, {
+        waitUntil: 'networkidle2',
+        timeout: 60000,
+      });
+      const finalUrl = page.url();
+      const finalHost = normalizeHost(new URL(finalUrl).hostname);
+      const allowlist = Array.isArray(config.loginHostAllowlist) ? config.loginHostAllowlist : [];
+      const hostAllowed = allowlist.length ? isHostAllowed(finalHost, allowlist) : true;
+
+      logTelemetry('login_target_attempt', {
+        candidate,
+        finalHost,
+        hostAllowed,
+      });
+
+      if (!hostAllowed) {
+        lastError = new Error(`Resolved host is not in allowlist: ${finalHost}`);
+        continue;
+      }
+
+      return {
+        requestedUrl: targetUrl,
+        candidate,
+        finalUrl,
+        finalHost,
+      };
+    } catch (error) {
+      lastError = error;
+      logTelemetry('login_target_attempt_failed', {
+        candidate,
+        error: error.message || error,
+      });
+    }
+  }
+
+  if (lastError) {
+    throw lastError;
+  }
+
+  throw new Error(`Unable to navigate target URL: ${targetUrl}`);
 }
 
 function printUsage() {
@@ -316,6 +481,80 @@ function parseCliOptions(argv) {
 function mergeKeywords(primary, fallback) {
   const merged = [...(primary || []), ...(fallback || [])];
   return Array.from(new Set(merged.filter(Boolean)));
+}
+
+function resolveLoginEntryClickPath(selectorResult, keywordResult) {
+  if (selectorResult && selectorResult.clicked) {
+    return {
+      clicked: true,
+      path: 'selector',
+      selector: selectorResult.selector || '',
+      text: selectorResult.text || '',
+      tag: selectorResult.tag || '',
+    };
+  }
+  if (keywordResult && keywordResult.clicked) {
+    return {
+      clicked: true,
+      path: 'keyword',
+      selector: '',
+      text: keywordResult.text || '',
+      tag: keywordResult.tag || '',
+    };
+  }
+  return {
+    clicked: false,
+    path: 'none',
+    selector: '',
+    text: '',
+    tag: '',
+  };
+}
+
+async function tryAutoClickLoginButtonBySelectors(page, selectors = []) {
+  if (!selectors.length) {
+    return { clicked: false };
+  }
+  return page.evaluate((selectorList) => {
+    const isVisible = (el) => {
+      const style = window.getComputedStyle(el);
+      const rect = el.getBoundingClientRect();
+      return (
+        style.display !== 'none' &&
+        style.visibility !== 'hidden' &&
+        style.opacity !== '0' &&
+        rect.width > 18 &&
+        rect.height > 12 &&
+        rect.bottom > 0 &&
+        rect.right > 0 &&
+        rect.top < window.innerHeight &&
+        rect.left < window.innerWidth
+      );
+    };
+
+    for (const selector of selectorList) {
+      const nodes = Array.from(document.querySelectorAll(selector));
+      for (const node of nodes) {
+        if (!(node instanceof HTMLElement) || !isVisible(node)) {
+          continue;
+        }
+        const target = node.closest('button, a, [role="button"]') || node;
+        if (!(target instanceof HTMLElement) || !isVisible(target)) {
+          continue;
+        }
+        target.click();
+        const text = (target.innerText || target.textContent || '').replace(/\s+/g, ' ').trim();
+        return {
+          clicked: true,
+          selector,
+          text: text.slice(0, 80),
+          tag: target.tagName.toLowerCase(),
+        };
+      }
+    }
+
+    return { clicked: false };
+  }, selectors);
 }
 
 async function pickBestQrFromElements(elements) {
@@ -433,9 +672,14 @@ async function isElementVisible(element) {
 /**
  * 自动检测并点击登录按钮
  */
-async function tryAutoClickLoginButton(page, inputKeywords = LOGIN_BUTTON_KEYWORDS) {
+async function tryAutoClickLoginButton(page, inputKeywords = LOGIN_BUTTON_KEYWORDS, selectors = []) {
+  const selectorResult = await tryAutoClickLoginButtonBySelectors(page, selectors).catch(() => ({ clicked: false }));
+  if (selectorResult.clicked) {
+    return resolveLoginEntryClickPath(selectorResult, null);
+  }
+
   const keywords = inputKeywords.map((keyword) => keyword.toLowerCase());
-  const clickResult = await page.evaluate((needles) => {
+  const keywordResult = await page.evaluate((needles) => {
     const normalize = (text) => (text || '').replace(/\s+/g, ' ').trim().toLowerCase();
     const matchesLoginText = (text) => {
       if (!text || text.length > 40) {
@@ -499,7 +743,7 @@ async function tryAutoClickLoginButton(page, inputKeywords = LOGIN_BUTTON_KEYWOR
     return { clicked: false };
   }, keywords);
 
-  return clickResult;
+  return resolveLoginEntryClickPath(selectorResult, keywordResult);
 }
 
 async function findQrElementInContext(context, config = {}) {
@@ -717,11 +961,23 @@ async function tryCaptureLoginQrCode(page, domain, config = {}) {
  */
 async function autoHandleLoginEntry(page, domain, config = {}) {
   const loginKeywords = mergeKeywords(config.loginButtonKeywords, LOGIN_BUTTON_KEYWORDS);
+  const loginEntrySelectors = config.loginEntrySelectors || [];
   const qrTabKeywords = mergeKeywords(config.qrTabKeywords, QR_TAB_KEYWORDS);
   const qrSwitchSelectors = config.qrSwitchSelectors || [];
 
+  const beforeClickUrl = page.url();
   console.log('🤖 尝试自动点击登录按钮...');
-  const clickResult = await tryAutoClickLoginButton(page, loginKeywords);
+  const clickResult = await tryAutoClickLoginButton(page, loginKeywords, loginEntrySelectors);
+  const afterClickUrl = page.url();
+
+  logTelemetry('login_click', {
+    domain,
+    path: clickResult.path,
+    selector: clickResult.selector || '-',
+    tag: clickResult.tag || '-',
+    beforeUrl: beforeClickUrl,
+    afterUrl: afterClickUrl,
+  });
 
   if (!clickResult.clicked) {
     console.log('⚠️  未自动找到登录按钮，请手动点击登录。');
@@ -729,19 +985,31 @@ async function autoHandleLoginEntry(page, domain, config = {}) {
   }
 
   if (clickResult.tag) {
-    console.log(`✓ 已自动点击登录入口: <${clickResult.tag}> ${clickResult.text}`);
+    console.log('✓ 已自动点击登录入口: <' + clickResult.tag + '> ' + clickResult.text);
   } else {
-    console.log(`✓ 已自动点击登录入口: ${clickResult.text}`);
+    console.log('✓ 已自动点击登录入口: ' + clickResult.text);
   }
+
+  let navigationDetected = false;
   try {
     await page.waitForNavigation({
       waitUntil: 'networkidle2',
       timeout: 8000,
     });
+    navigationDetected = true;
     console.log('✓ 已检测到登录入口触发页面跳转');
   } catch (_error) {
     // No navigation is also acceptable (e.g. modal popup in same page).
   }
+
+  const afterNavigationUrl = page.url();
+  logTelemetry('login_transition', {
+    domain,
+    beforeUrl: beforeClickUrl,
+    afterUrl: afterNavigationUrl,
+    navigated: navigationDetected ? 'yes' : 'no',
+  });
+
   await new Promise((resolve) => setTimeout(resolve, 1500));
 
   let switched;
@@ -756,7 +1024,7 @@ async function autoHandleLoginEntry(page, domain, config = {}) {
     }
   }
   if (switched && switched.switched) {
-    console.log(`✓ 已切换到二维码登录: ${switched.text}`);
+    console.log('✓ 已切换到二维码登录: ' + switched.text);
     await new Promise((resolve) => setTimeout(resolve, 1200));
   }
 
@@ -777,8 +1045,8 @@ async function autoHandleLoginEntry(page, domain, config = {}) {
     return null;
   }
 
-  console.log(`✅ 二维码已保存: ${qrResult.qrPath}`);
-  console.log(`   检测来源: ${qrResult.source}`);
+  console.log('✅ 二维码已保存: ' + qrResult.qrPath);
+  console.log('   检测来源: ' + qrResult.source);
   return qrResult;
 }
 
@@ -848,82 +1116,204 @@ function saveCookies(cookies, domain) {
  */
 async function detectLoginStatus(page, targetUrl, config) {
   const domain = extractDomain(targetUrl);
-
-  // 方法 1: Cookie 检测
   console.log('🔍 检测登录状态 (Cookie 检测)...');
-  const cookies = await page.cookies();
 
-  // 如果配置了特定的认证 cookie，检查它是否存在
+  const cookies = await page.cookies();
+  const currentUrl = page.url();
+  let currentHost = '';
+  let currentPath = '';
+  try {
+    const parsed = new URL(currentUrl);
+    currentHost = normalizeHost(parsed.hostname);
+    currentPath = String(parsed.pathname || '').toLowerCase();
+  } catch (_error) {
+    currentHost = normalizeHost(currentUrl);
+  }
+
+  if (isJdDomain(domain)) {
+    const markerConfig = config.loginVerificationMarkers || {};
+    const markerCookieNames = (markerConfig.cookieNames || JD_AUTH_COOKIE_CANDIDATES)
+      .map((item) => String(item || '').toLowerCase())
+      .filter(Boolean);
+    const loginHosts = (markerConfig.loginHosts || ['passport.jd.com', 'plogin.m.jd.com', 'plogin.jd.com'])
+      .map((item) => normalizeHost(item))
+      .filter(Boolean);
+    const loginPathPatterns = (markerConfig.loginPathPatterns || ['/new/login', '/login/login'])
+      .map((item) => String(item || '').toLowerCase())
+      .filter(Boolean);
+    const domIndicators = Array.isArray(markerConfig.domIndicators) ? markerConfig.domIndicators : [];
+    const successUrlPatterns = (markerConfig.successUrlPatterns || [])
+      .map((item) => String(item || '').toLowerCase())
+      .filter(Boolean);
+
+    const matchedCookies = cookies
+      .filter((cookie) => markerCookieNames.includes(String(cookie.name || '').toLowerCase()))
+      .map((cookie) => cookie.name);
+
+    const matchedDomSelectors = [];
+    for (const selector of domIndicators) {
+      try {
+        const element = await page.$(selector);
+        if (!element) {
+          continue;
+        }
+        matchedDomSelectors.push(selector);
+        await element.dispose();
+      } catch (_error) {
+        // ignore selector read errors
+      }
+    }
+
+    const isLoginHost = loginHosts.includes(currentHost);
+    const isLoginPath = loginPathPatterns.some((pattern) => currentPath.includes(pattern));
+    const matchedSuccessUrlPattern = successUrlPatterns.find((pattern) => currentUrl.toLowerCase().includes(pattern)) || '';
+    const hasCookieMarker = matchedCookies.length > 0;
+    const hasDomMarker = matchedDomSelectors.length > 0;
+    const hasUrlMarker = Boolean(matchedSuccessUrlPattern) || (isJdDomain(currentHost) && !isLoginHost && !isLoginPath);
+    const success = hasCookieMarker && (hasDomMarker || hasUrlMarker);
+
+    let markerType = 'none';
+    if (hasCookieMarker) {
+      markerType = 'cookie';
+    } else if (hasDomMarker) {
+      markerType = 'dom';
+    } else if (hasUrlMarker) {
+      markerType = 'url';
+    }
+
+    const markerValues = [
+      ...matchedCookies.map((name) => ({ type: 'cookie', value: name })),
+      ...matchedDomSelectors.map((selector) => ({ type: 'dom', value: selector })),
+    ];
+    if (hasUrlMarker) {
+      markerValues.push({
+        type: 'url',
+        value: currentHost + currentPath,
+      });
+    }
+
+    const details = {
+      domain,
+      targetUrl,
+      currentUrl,
+      currentHost,
+      currentPath,
+      loginHost: isLoginHost,
+      loginPath: isLoginPath,
+      matchedCookies,
+      matchedDomSelectors,
+      matchedSuccessUrlPattern,
+    };
+
+    logTelemetry('post_scan_verify', {
+      domain,
+      success,
+      method: 'jd-markers',
+      markerType,
+      host: currentHost || '-',
+      path: currentPath || '-',
+      cookies: matchedCookies.join('|') || '-',
+      domCount: matchedDomSelectors.length,
+    });
+
+    if (success) {
+      return {
+        success: true,
+        method: 'jd-markers',
+        markerType,
+        markerValues,
+        details,
+      };
+    }
+
+    return {
+      success: false,
+      method: 'jd-markers',
+      markerType,
+      markerValues,
+      details,
+      message: 'JD markers not satisfied',
+    };
+  }
+
   if (config.authCookieName) {
-    const authCookie = cookies.find(c => c.name === config.authCookieName);
+    const authCookie = cookies.find((cookie) => cookie.name === config.authCookieName);
     if (authCookie) {
-      console.log(`✓ 找到认证 cookie: ${authCookie.name}`);
+      console.log('✓ 找到认证 cookie: ' + authCookie.name);
       return {
         success: true,
         method: 'cookie',
         cookieName: authCookie.name,
-        cookieValue: authCookie.value.substring(0, 20) + '...'
+        cookieValue: authCookie.value.substring(0, 20) + '...',
+        markerType: 'cookie',
+        markerValues: [{ type: 'cookie', value: authCookie.name }],
+        details: { domain, targetUrl, currentUrl },
       };
     }
   }
 
-  // 通用 Cookie 检测：查找包含 session/auth/token 的 cookie
-  const authCookies = cookies.filter(c =>
-    c.name.toLowerCase().includes('session') ||
-    c.name.toLowerCase().includes('auth') ||
-    c.name.toLowerCase().includes('token') ||
-    c.name.toLowerCase().includes('sid')
-  );
+  const authCookies = cookies.filter((cookie) => {
+    const cookieName = String(cookie.name || '').toLowerCase();
+    return (
+      cookieName.includes('session') ||
+      cookieName.includes('auth') ||
+      cookieName.includes('token') ||
+      cookieName.includes('sid')
+    );
+  });
 
   if (authCookies.length > 0) {
-    console.log(`✓ 找到 ${authCookies.length} 个可能的认证 cookie:`);
-    authCookies.forEach(c => {
-      console.log(`  - ${c.name}`);
-    });
+    console.log('✓ 找到 ' + authCookies.length + ' 个可能的认证 cookie');
     return {
       success: true,
       method: 'cookie-guess',
-      cookies: authCookies.map(c => c.name)
+      cookies: authCookies.map((cookie) => cookie.name),
+      markerType: 'cookie',
+      markerValues: authCookies.map((cookie) => ({ type: 'cookie', value: cookie.name })),
+      details: { domain, targetUrl, currentUrl },
     };
   }
 
-  // 方法 2: URL 变化检测
-  console.log('⚠️  未找到认证 cookie，尝试 URL 变化检测...');
-  const currentUrl = page.url();
   if (currentUrl !== targetUrl && currentUrl.includes(domain)) {
-    console.log(`✓ URL 已变化: ${currentUrl}`);
     return {
       success: true,
       method: 'url-change',
-      url: currentUrl
+      url: currentUrl,
+      markerType: 'url',
+      markerValues: [{ type: 'url', value: currentUrl }],
+      details: { domain, targetUrl, currentUrl },
     };
   }
 
-  // 方法 3: DOM 元素检测（如果配置了）
   if (config.loginIndicators && config.loginIndicators.length > 0) {
-    console.log('⚠️  尝试 DOM 元素检测...');
     for (const selector of config.loginIndicators) {
       try {
         const element = await page.$(selector);
-        if (element) {
-          console.log(`✓ 找到登录指示器: ${selector}`);
-          return {
-            success: true,
-            method: 'dom-element',
-            selector: selector
-          };
+        if (!element) {
+          continue;
         }
-      } catch (e) {
-        // 继续尝试下一个选择器
+        await element.dispose();
+        return {
+          success: true,
+          method: 'dom-element',
+          selector,
+          markerType: 'dom',
+          markerValues: [{ type: 'dom', value: selector }],
+          details: { domain, targetUrl, currentUrl },
+        };
+      } catch (_error) {
+        // continue
       }
     }
   }
 
-  // 所有检测方法都失败
   return {
     success: false,
     method: 'none',
-    message: '无法确定登录状态'
+    markerType: 'none',
+    markerValues: [],
+    details: { domain, targetUrl, currentUrl },
+    message: '无法确定登录状态',
   };
 }
 
@@ -1005,10 +1395,12 @@ async function login(targetUrl, options = {}) {
     console.log('');
     console.log('═══════════════════════════════════════════════════════\n');
 
-    // 访问目标网站
-    await page.goto(targetUrl, {
-      waitUntil: 'networkidle2',
-      timeout: 60000
+    // 访问目标网站（支持 JD 目标回退 + host allowlist 校验）
+    const navigationResult = await navigateWithFallback(page, targetUrl, config);
+    logTelemetry('login_target_resolved', {
+      requested: navigationResult.requestedUrl,
+      candidate: navigationResult.candidate,
+      finalHost: navigationResult.finalHost,
     });
 
     // 自动点击登录并尝试保存二维码
@@ -1032,7 +1424,7 @@ async function login(targetUrl, options = {}) {
     await new Promise(resolve => setTimeout(resolve, 3000));
 
     // 检测登录状态
-    const loginStatus = await detectLoginStatus(page, targetUrl, config);
+    const loginStatus = await detectLoginStatus(page, navigationResult.finalUrl || targetUrl, config);
 
     if (!loginStatus.success) {
       console.error('❌ 登录状态检测失败');
@@ -1263,4 +1655,12 @@ if (require.main === module) {
   main();
 }
 
-module.exports = { login, SITE_CONFIGS };
+module.exports = {
+  login,
+  SITE_CONFIGS,
+  resolveLoginEntryClickPath,
+  getLoginTargetCandidates,
+  isHostAllowed,
+  JD_LOGIN_TARGET_FALLBACKS,
+  JD_LOGIN_HOST_ALLOWLIST,
+};

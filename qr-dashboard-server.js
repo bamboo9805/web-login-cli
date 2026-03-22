@@ -33,11 +33,65 @@ const LOCAL_CHROME_CANDIDATES = {
   linux: ['/usr/bin/google-chrome', '/usr/bin/google-chrome-stable', '/usr/bin/chromium-browser', '/usr/bin/chromium'],
 };
 
+const JD_LOGIN_TARGETS = [
+  'https://passport.jd.com/new/login.aspx',
+  'https://plogin.m.jd.com/cgi-bin/m/login/login?appid=300&returnurl=https%3A%2F%2Fm.jd.com%2F',
+  'https://plogin.jd.com/login/login',
+  'https://www.jd.com/',
+];
+
+const JD_LOGIN_HOST_ALLOWLIST = [
+  'jd.com',
+  'www.jd.com',
+  'm.jd.com',
+  'passport.jd.com',
+  'plogin.m.jd.com',
+  'plogin.jd.com',
+  'qr.m.jd.com',
+];
+
 const TARGET_URL_OVERRIDES = {
-  'jd.com': 'https://www.jd.com/',
   'zhihu.com': 'https://www.zhihu.com/signin',
   'bilibili.com': 'https://passport.bilibili.com/login',
 };
+
+function toHostFromValue(rawValue) {
+  const value = String(rawValue || '').trim().toLowerCase();
+  if (!value) {
+    return '';
+  }
+  if (value.includes('://')) {
+    try {
+      return new URL(value).hostname.toLowerCase();
+    } catch (_error) {
+      return '';
+    }
+  }
+  return value.replace(/\/.*$/, '').replace(/:\d+$/, '').replace(/^www\./, '');
+}
+
+function getJdLoginTargets() {
+  return [...JD_LOGIN_TARGETS];
+}
+
+function getJdLoginHostAllowlist() {
+  return [...JD_LOGIN_HOST_ALLOWLIST];
+}
+
+function isAllowedJdLoginHost(rawValue) {
+  const host = toHostFromValue(rawValue);
+  if (!host) {
+    return false;
+  }
+  if (JD_LOGIN_HOST_ALLOWLIST.includes(host)) {
+    return true;
+  }
+  return host.endsWith('.jd.com');
+}
+
+function resolveJdTargetUrl() {
+  return JD_LOGIN_TARGETS[0];
+}
 
 const app = express();
 const manager = new QRMonitorManager({ rootDir: ROOT_DIR });
@@ -106,6 +160,9 @@ function toSessionId(domain) {
 // 解析目标 URL
 function resolveTargetUrl(domain) {
   const cleanDomain = assertDomain(domain);
+  if (cleanDomain === 'jd.com') {
+    return resolveJdTargetUrl();
+  }
   return TARGET_URL_OVERRIDES[cleanDomain] || `https://${cleanDomain}`;
 }
 
@@ -428,6 +485,10 @@ module.exports = {
   normalizeDomain,
   assertDomain,
   resolveTargetUrl,
+  resolveJdTargetUrl,
+  isAllowedJdLoginHost,
+  getJdLoginTargets,
+  getJdLoginHostAllowlist,
   resolveHeadlessMode,
   TARGET_URL_OVERRIDES,
 };

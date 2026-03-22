@@ -3,12 +3,22 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 
-const { SITE_CONFIGS } = require('../login_web');
-const { getSiteKeywords } = require('../src/qr/monitor-core');
+const {
+  SITE_CONFIGS,
+  resolveLoginEntryClickPath: resolveWebLoginEntryClickPath,
+} = require('../login_web');
+const {
+  getSiteKeywords,
+  resolveLoginEntryClickPath: resolveMonitorLoginEntryClickPath,
+} = require('../src/qr/monitor-core');
 const {
   resolveTargetUrl,
+  resolveJdTargetUrl,
   resolveHeadlessMode,
   TARGET_URL_OVERRIDES,
+  getJdLoginTargets,
+  getJdLoginHostAllowlist,
+  isAllowedJdLoginHost,
 } = require('../qr-dashboard-server');
 
 const ADAPTER_DOMAINS = [
@@ -20,6 +30,7 @@ const ADAPTER_DOMAINS = [
 
 const CONFIG_KEYS = [
   'loginButtonKeywords',
+  'loginEntrySelectors',
   'qrTabKeywords',
   'qrHintKeywords',
   'loginModalSelectors',
@@ -75,6 +86,10 @@ test('adapter-specific keywords/selectors are present for recent sites', () => {
     SITE_CONFIGS['jd.com'].qrCodeSelectors.includes('#passport-main-qrcode-img'),
     'jd.com should include passport qrcode selector'
   );
+  assert.ok(
+    SITE_CONFIGS['jd.com'].loginEntrySelectors.includes('.link-login'),
+    'jd.com should include deterministic login entry selectors'
+  );
 });
 
 test('dashboard target override includes zhihu signin entry', () => {
@@ -90,6 +105,54 @@ test('dashboard target override includes zhihu signin entry', () => {
     resolveTargetUrl('https://www.zhihu.com/signin?from=foo'),
     'https://www.zhihu.com/signin'
   );
+});
+
+test('dashboard resolves JD to preferred login target with fallback list exported', () => {
+  const targets = getJdLoginTargets();
+  assert.ok(Array.isArray(targets) && targets.length >= 2, 'JD target list should be non-empty');
+  assert.equal(resolveJdTargetUrl(), targets[0]);
+  assert.equal(resolveTargetUrl('jd.com'), targets[0]);
+  assert.equal(resolveTargetUrl('https://www.jd.com/?from=test'), targets[0]);
+});
+
+test('dashboard JD allowlist matcher accepts JD login flow hosts', () => {
+  const allowlist = getJdLoginHostAllowlist();
+  assert.ok(allowlist.includes('passport.jd.com'));
+  assert.ok(allowlist.includes('plogin.m.jd.com'));
+
+  assert.equal(isAllowedJdLoginHost('passport.jd.com'), true);
+  assert.equal(isAllowedJdLoginHost('https://plogin.m.jd.com/login/login'), true);
+  assert.equal(isAllowedJdLoginHost('https://order.jd.com/center/list.action'), true);
+  assert.equal(isAllowedJdLoginHost('example.com'), false);
+});
+
+test('login entry telemetry helper prefers selector path before keyword path', () => {
+  const selectorHit = {
+    clicked: true,
+    selector: '.link-login',
+    text: '登录',
+    tag: 'a',
+  };
+  const keywordHit = {
+    clicked: true,
+    text: '登录',
+    tag: 'a',
+  };
+
+  const webSelectorPath = resolveWebLoginEntryClickPath(selectorHit, keywordHit);
+  const monitorSelectorPath = resolveMonitorLoginEntryClickPath(selectorHit, keywordHit);
+  assert.equal(webSelectorPath.path, 'selector');
+  assert.equal(monitorSelectorPath.path, 'selector');
+
+  const webKeywordPath = resolveWebLoginEntryClickPath({ clicked: false }, keywordHit);
+  const monitorKeywordPath = resolveMonitorLoginEntryClickPath({ clicked: false }, keywordHit);
+  assert.equal(webKeywordPath.path, 'keyword');
+  assert.equal(monitorKeywordPath.path, 'keyword');
+
+  const webNonePath = resolveWebLoginEntryClickPath({ clicked: false }, { clicked: false });
+  const monitorNonePath = resolveMonitorLoginEntryClickPath({ clicked: false }, { clicked: false });
+  assert.equal(webNonePath.path, 'none');
+  assert.equal(monitorNonePath.path, 'none');
 });
 
 test('dashboard headless mode parser returns expected puppeteer mode', () => {

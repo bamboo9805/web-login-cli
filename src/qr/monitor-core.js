@@ -117,9 +117,17 @@ const SITE_KEYWORD_OVERRIDES = {
     qrSwitchSelectors: ['.scan-icon', '[class*="scan"]', '[class*="qrcode-tab"]', '[class*="qr-tab"]'],
   },
   'jd.com': {
-    loginButtonKeywords: [],
-    qrTabKeywords: [],
-    qrHintKeywords: ['扫码', '二维码'],
+    loginButtonKeywords: ['登录', '请登录', '你好，请登录', '登录/注册', '立即登录'],
+    loginEntrySelectors: [
+      '.link-login',
+      '#ttbar-login .link-login',
+      '.login-btn',
+      '.J_login',
+      'a[href*="passport.jd.com/new/login.aspx"]',
+      'a[href*="passport.jd.com"]',
+    ],
+    qrTabKeywords: ['扫码登录', '二维码登录', '手机扫码登录', '扫码'],
+    qrHintKeywords: ['扫码', '二维码', '京东', 'jd'],
     loginModalSelectors: [
       '.qrcode-login',
       '.login-form-border',
@@ -134,6 +142,19 @@ const SITE_KEYWORD_OVERRIDES = {
       'img[src*="qr.m.jd.com/show"]'
     ],
     qrSwitchSelectors: [],
+    loginVerificationMarkers: {
+      cookieNames: ['pt_key', 'pt_pin', 'thor', 'pin'],
+      loginHosts: ['passport.jd.com', 'plogin.m.jd.com', 'plogin.jd.com'],
+      loginPathPatterns: ['/new/login', '/login/login', '/cgi-bin/m/login/login'],
+      domIndicators: [
+        '#ttbar-login .nickname',
+        '#ttbar-login [class*="nickname"]',
+        '.userinfo .u-name',
+        '.user-name',
+        '.link-logout',
+      ],
+      successUrlPatterns: ['home.jd.com', 'order.jd.com', 'cart.jd.com', 'jd.com/member'],
+    },
   },
 };
 
@@ -160,27 +181,106 @@ function mergeKeywords(primary, fallback) {
   return Array.from(new Set(merged.filter(Boolean)));
 }
 
+function normalizeHost(value) {
+  const raw = String(value || '').trim().toLowerCase();
+  if (!raw) {
+    return '';
+  }
+  if (raw.includes('://')) {
+    try {
+      return new URL(raw).hostname.toLowerCase();
+    } catch (_error) {
+      return '';
+    }
+  }
+  return raw.replace(/\/.*/, '').replace(/:\d+$/, '').replace(/^www\./, '');
+}
+
+function isHostAllowed(host, allowlist = []) {
+  const normalizedHost = normalizeHost(host);
+  if (!normalizedHost) {
+    return false;
+  }
+  for (const item of allowlist) {
+    const normalizedItem = normalizeHost(item);
+    if (!normalizedItem) {
+      continue;
+    }
+    if (normalizedHost === normalizedItem || normalizedHost.endsWith(`.${normalizedItem}`)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function isJdDomain(value) {
+  return isHostAllowed(value, ['jd.com']);
+}
+
+function resolveLoginEntryTelemetry(selectorResult, keywordResult) {
+  if (selectorResult?.clicked) {
+    return {
+      path: 'selector',
+      clicked: true,
+      selector: selectorResult.selector || '',
+      text: selectorResult.text || '',
+      tag: selectorResult.tag || '',
+    };
+  }
+  if (keywordResult?.clicked) {
+    return {
+      path: 'keyword',
+      clicked: true,
+      selector: '',
+      text: keywordResult.text || '',
+      tag: keywordResult.tag || '',
+    };
+  }
+  return {
+    path: 'none',
+    clicked: false,
+    selector: '',
+    text: '',
+    tag: '',
+  };
+}
+
+function telemetryLine(event, payload = {}) {
+  const suffix = Object.entries(payload)
+    .filter(([, value]) => value !== undefined && value !== null && value !== '')
+    .map(([key, value]) => `${key}=${String(value).replace(/\s+/g, ' ').slice(0, 180)}`)
+    .join(' ');
+  if (suffix) {
+    return `[telemetry] ${event} ${suffix}`;
+  }
+  return `[telemetry] ${event}`;
+}
+
 function getSiteKeywords(domain) {
   const clean = (domain || '').replace(/^www\./, '').toLowerCase();
   for (const [key, config] of Object.entries(SITE_KEYWORD_OVERRIDES)) {
     if (clean.includes(key) || key.includes(clean)) {
       return {
         loginButtonKeywords: mergeKeywords(config.loginButtonKeywords, LOGIN_BUTTON_KEYWORDS),
+        loginEntrySelectors: mergeKeywords(config.loginEntrySelectors, []),
         qrTabKeywords: mergeKeywords(config.qrTabKeywords, QR_TAB_KEYWORDS),
         qrHintKeywords: mergeKeywords(config.qrHintKeywords, QR_HINT_KEYWORDS),
         loginModalSelectors: mergeKeywords(config.loginModalSelectors, LOGIN_MODAL_SELECTORS),
         qrCodeSelectors: mergeKeywords(config.qrCodeSelectors, QR_CODE_SELECTORS),
         qrSwitchSelectors: mergeKeywords(config.qrSwitchSelectors, QR_SWITCH_SELECTORS),
+        loginVerificationMarkers: config.loginVerificationMarkers || null,
       };
     }
   }
   return {
     loginButtonKeywords: LOGIN_BUTTON_KEYWORDS,
+    loginEntrySelectors: [],
     qrTabKeywords: QR_TAB_KEYWORDS,
     qrHintKeywords: QR_HINT_KEYWORDS,
     loginModalSelectors: LOGIN_MODAL_SELECTORS,
     qrCodeSelectors: QR_CODE_SELECTORS,
     qrSwitchSelectors: QR_SWITCH_SELECTORS,
+    loginVerificationMarkers: null,
   };
 }
 
@@ -268,6 +368,7 @@ class QRMonitorSession extends EventEmitter {
       qrAgeMs: 0,
       lastRefreshAttemptAt: 0,
       refreshCount: 0,
+      loginVerification: null,
     };
 
     this.qrHistory = new Map();
@@ -303,6 +404,7 @@ class QRMonitorSession extends EventEmitter {
       qrAgeMs,
       qrAgeSec: Math.floor(qrAgeMs / 1000),
       refreshCount: this.state.refreshCount,
+      loginVerification: this.state.loginVerification || null,
       lastError: this.state.lastError,
       lastUpdateAt: this.state.lastUpdateAt,
     };
@@ -573,13 +675,35 @@ class QRMonitorSession extends EventEmitter {
       return true;
     }
 
-    const clickRes = await this.clickByKeywords(page, this.siteKeywords.loginButtonKeywords);
+    const beforeUrl = page.url();
+    const selectorResult = await this.clickBySelectors(page, this.siteKeywords.loginEntrySelectors || []).catch(() => ({ clicked: false }));
+    const keywordResult = selectorResult.clicked
+      ? { clicked: false }
+      : await this.clickByKeywords(page, this.siteKeywords.loginButtonKeywords).catch(() => ({ clicked: false }));
+    const clickRes = resolveLoginEntryTelemetry(selectorResult, keywordResult);
+    const afterClickUrl = page.url();
+
+    console.log(telemetryLine('login_click', {
+      domain: this.targetDomain,
+      path: clickRes.path,
+      selector: clickRes.selector || '-',
+      tag: clickRes.tag || '-',
+      beforeUrl,
+      afterUrl: afterClickUrl,
+    }));
+
     if (clickRes.clicked) {
       this.updateState({
         status: 'waiting_login_modal',
-        message: `Clicked login button <${clickRes.tag}> ${clickRes.text}`,
+        message: 'Clicked login button [' + clickRes.path + '] ' + (clickRes.text || clickRes.selector || ''),
       });
       await new Promise((resolve) => setTimeout(resolve, 1200));
+      const afterWaitUrl = page.url();
+      console.log(telemetryLine('login_transition', {
+        domain: this.targetDomain,
+        beforeUrl,
+        afterUrl: afterWaitUrl,
+      }));
       return this.hasLoginModal(page);
     }
 
@@ -1047,6 +1171,105 @@ class QRMonitorSession extends EventEmitter {
     return best;
   }
 
+  async detectLoginVerification(page) {
+    const currentUrl = page.url();
+    let currentHost = normalizeHost(currentUrl);
+    let currentPath = '';
+    try {
+      const parsed = new URL(currentUrl);
+      currentHost = normalizeHost(parsed.hostname);
+      currentPath = String(parsed.pathname || '').toLowerCase();
+    } catch (_error) {
+      // keep best effort host/path
+    }
+
+    const markerConfig = this.siteKeywords.loginVerificationMarkers || null;
+    if (!markerConfig || !isJdDomain(this.targetDomain)) {
+      return {
+        success: false,
+        method: 'none',
+        markerType: 'none',
+        markerValues: [],
+        details: { currentUrl, currentHost, currentPath },
+      };
+    }
+
+    const cookies = await page.cookies().catch(() => []);
+    const markerCookieNames = (markerConfig.cookieNames || [])
+      .map((item) => String(item || '').toLowerCase())
+      .filter(Boolean);
+    const loginHosts = (markerConfig.loginHosts || [])
+      .map((item) => normalizeHost(item))
+      .filter(Boolean);
+    const loginPathPatterns = (markerConfig.loginPathPatterns || [])
+      .map((item) => String(item || '').toLowerCase())
+      .filter(Boolean);
+    const successUrlPatterns = (markerConfig.successUrlPatterns || [])
+      .map((item) => String(item || '').toLowerCase())
+      .filter(Boolean);
+    const domIndicators = Array.isArray(markerConfig.domIndicators) ? markerConfig.domIndicators : [];
+
+    const matchedCookies = cookies
+      .filter((cookie) => markerCookieNames.includes(String(cookie.name || '').toLowerCase()))
+      .map((cookie) => cookie.name);
+
+    const matchedDomSelectors = [];
+    for (const selector of domIndicators) {
+      try {
+        const element = await page.$(selector);
+        if (!element) {
+          continue;
+        }
+        matchedDomSelectors.push(selector);
+        await element.dispose();
+      } catch (_error) {
+        // ignore selector read errors
+      }
+    }
+
+    const isLoginHost = loginHosts.includes(currentHost);
+    const isLoginPath = loginPathPatterns.some((pattern) => currentPath.includes(pattern));
+    const matchedSuccessUrlPattern = successUrlPatterns.find((pattern) => currentUrl.toLowerCase().includes(pattern)) || '';
+
+    const hasCookieMarker = matchedCookies.length > 0;
+    const hasDomMarker = matchedDomSelectors.length > 0;
+    const hasUrlMarker = Boolean(matchedSuccessUrlPattern) || (isJdDomain(currentHost) && !isLoginHost && !isLoginPath);
+    const success = hasCookieMarker && (hasDomMarker || hasUrlMarker);
+
+    let markerType = 'none';
+    if (hasCookieMarker) {
+      markerType = 'cookie';
+    } else if (hasDomMarker) {
+      markerType = 'dom';
+    } else if (hasUrlMarker) {
+      markerType = 'url';
+    }
+
+    const markerValues = [
+      ...matchedCookies.map((name) => ({ type: 'cookie', value: name })),
+      ...matchedDomSelectors.map((selector) => ({ type: 'dom', value: selector })),
+    ];
+    if (hasUrlMarker) {
+      markerValues.push({ type: 'url', value: currentHost + currentPath });
+    }
+
+    return {
+      success,
+      method: 'jd-markers',
+      markerType,
+      markerValues,
+      details: {
+        currentUrl,
+        currentHost,
+        currentPath,
+        matchedCookies,
+        matchedDomSelectors,
+        matchedSuccessUrlPattern,
+        loginHost: isLoginHost,
+        loginPath: isLoginPath,
+      },
+    };
+  }
   async captureAndPublishQr(page) {
     const qrElement = await this.findBestQrElement(page);
     if (!qrElement) {
@@ -1117,6 +1340,31 @@ class QRMonitorSession extends EventEmitter {
 
       this.updateState({ pageUrl: page.url() });
 
+      const preVerify = await this.detectLoginVerification(page);
+      this.updateState({ loginVerification: preVerify });
+      console.log(telemetryLine('post_scan_verify', {
+        domain: this.targetDomain,
+        stage: 'pre',
+        success: preVerify.success,
+        method: preVerify.method,
+        markerType: preVerify.markerType,
+        host: preVerify.details?.currentHost || '-',
+        cookies: (preVerify.details?.matchedCookies || []).join('|') || '-',
+      }));
+      if (preVerify.success) {
+        this.updateState({
+          status: 'logged_in',
+          message: 'Login verified by ' + preVerify.markerType,
+          qrAvailable: false,
+          qrHash: '',
+          qrDataUrl: '',
+          qrFile: '',
+          qrCapturedAt: 0,
+          qrAgeMs: 0,
+        });
+        return;
+      }
+
       const hasModal = await this.ensureLoginModalOpen(page);
       if (!hasModal) {
         const hasLogin = await this.hasLoginButton(page, this.siteKeywords.loginButtonKeywords);
@@ -1127,8 +1375,8 @@ class QRMonitorSession extends EventEmitter {
           });
         } else {
           this.updateState({
-            status: 'logged_in',
-            message: 'No login popup detected; account may already be logged in',
+            status: 'waiting_verification',
+            message: 'No login popup detected; waiting for JD login markers',
           });
         }
       }
@@ -1140,27 +1388,50 @@ class QRMonitorSession extends EventEmitter {
         await this.refreshExpiredQr(page, force ? 'force_refresh' : 'manual_refresh', force);
         this.forceRefreshRequested = false;
         await this.captureAndPublishQr(page);
-        return;
-      }
+      } else {
+        if (await this.hasExpiredQrText(page)) {
+          await this.refreshExpiredQr(page, 'expired_text');
+        }
 
-      if (await this.hasExpiredQrText(page)) {
-        await this.refreshExpiredQr(page, 'expired_text');
-      }
-
-      const captureResult = await this.captureAndPublishQr(page);
-      if (captureResult.found && this.state.qrCapturedAt) {
-        const ageMs = Date.now() - this.state.qrCapturedAt;
-        if (ageMs > this.qrMaxAgeMs) {
-          this.updateState({
-            status: 'stale_qr',
-            message: `QR older than ${Math.floor(this.qrMaxAgeMs / 1000)}s, auto refreshing...`,
-            qrAgeMs: ageMs,
-          });
-          const refreshed = await this.refreshExpiredQr(page, 'stale_age');
-          if (refreshed) {
-            await this.captureAndPublishQr(page);
+        const captureResult = await this.captureAndPublishQr(page);
+        if (captureResult.found && this.state.qrCapturedAt) {
+          const ageMs = Date.now() - this.state.qrCapturedAt;
+          if (ageMs > this.qrMaxAgeMs) {
+            this.updateState({
+              status: 'stale_qr',
+              message: 'QR older than ' + Math.floor(this.qrMaxAgeMs / 1000) + 's, auto refreshing...',
+              qrAgeMs: ageMs,
+            });
+            const refreshed = await this.refreshExpiredQr(page, 'stale_age');
+            if (refreshed) {
+              await this.captureAndPublishQr(page);
+            }
           }
         }
+      }
+
+      const postVerify = await this.detectLoginVerification(page);
+      this.updateState({ loginVerification: postVerify });
+      console.log(telemetryLine('post_scan_verify', {
+        domain: this.targetDomain,
+        stage: 'post',
+        success: postVerify.success,
+        method: postVerify.method,
+        markerType: postVerify.markerType,
+        host: postVerify.details?.currentHost || '-',
+        cookies: (postVerify.details?.matchedCookies || []).join('|') || '-',
+      }));
+      if (postVerify.success) {
+        this.updateState({
+          status: 'logged_in',
+          message: 'Login verified by ' + postVerify.markerType,
+          qrAvailable: false,
+          qrHash: '',
+          qrDataUrl: '',
+          qrFile: '',
+          qrCapturedAt: 0,
+          qrAgeMs: 0,
+        });
       }
     } catch (error) {
       this.updateState({
@@ -1256,6 +1527,7 @@ module.exports = {
   QRMonitorSession,
   QRMonitorManager,
   getSiteKeywords,
+  resolveLoginEntryClickPath: resolveLoginEntryTelemetry,
   parsePort,
   toFileSafeToken,
   buildDefaultQrFilename,
