@@ -298,14 +298,38 @@ function isJdDomain(host) {
   return isHostAllowed(host, ['jd.com']);
 }
 
+function isTelemetryEnabled() {
+  const raw = String(process.env.WEB_LOGIN_TELEMETRY || process.env.OPENCLAW_WEB_LOGIN_TELEMETRY || '1')
+    .trim()
+    .toLowerCase();
+  return !['0', 'false', 'off', 'no'].includes(raw);
+}
+
+function sanitizeTelemetryValue(key, value) {
+  const normalizedKey = String(key || '').toLowerCase();
+  const rawValue = String(value || '');
+  if (!normalizedKey.includes('url')) {
+    return rawValue;
+  }
+  try {
+    const parsed = new URL(rawValue);
+    return `${parsed.origin}${parsed.pathname}`;
+  } catch (_error) {
+    return rawValue.split('?')[0].split('#')[0];
+  }
+}
+
 function toTelemetryPayload(payload = {}) {
   return Object.entries(payload)
     .filter(([, value]) => value !== undefined && value !== null && value !== '')
-    .map(([key, value]) => `${key}=${String(value).replace(/\s+/g, ' ').slice(0, 180)}`)
+    .map(([key, value]) => `${key}=${sanitizeTelemetryValue(key, value).replace(/\s+/g, ' ').slice(0, 180)}`)
     .join(' ');
 }
 
 function logTelemetry(event, payload = {}) {
+  if (!isTelemetryEnabled()) {
+    return;
+  }
   const suffix = toTelemetryPayload(payload);
   if (suffix) {
     console.log(`[telemetry] ${event} ${suffix}`);

@@ -245,15 +245,43 @@ function resolveLoginEntryTelemetry(selectorResult, keywordResult) {
   };
 }
 
+function isTelemetryEnabled() {
+  const raw = String(process.env.WEB_LOGIN_TELEMETRY || process.env.OPENCLAW_WEB_LOGIN_TELEMETRY || '1')
+    .trim()
+    .toLowerCase();
+  return !['0', 'false', 'off', 'no'].includes(raw);
+}
+
+function sanitizeTelemetryValue(key, value) {
+  const normalizedKey = String(key || '').toLowerCase();
+  const rawValue = String(value || '');
+  if (!normalizedKey.includes('url')) {
+    return rawValue;
+  }
+  try {
+    const parsed = new URL(rawValue);
+    return `${parsed.origin}${parsed.pathname}`;
+  } catch (_error) {
+    return rawValue.split('?')[0].split('#')[0];
+  }
+}
+
 function telemetryLine(event, payload = {}) {
   const suffix = Object.entries(payload)
     .filter(([, value]) => value !== undefined && value !== null && value !== '')
-    .map(([key, value]) => `${key}=${String(value).replace(/\s+/g, ' ').slice(0, 180)}`)
+    .map(([key, value]) => `${key}=${sanitizeTelemetryValue(key, value).replace(/\s+/g, ' ').slice(0, 180)}`)
     .join(' ');
   if (suffix) {
     return `[telemetry] ${event} ${suffix}`;
   }
   return `[telemetry] ${event}`;
+}
+
+function logTelemetry(event, payload = {}) {
+  if (!isTelemetryEnabled()) {
+    return;
+  }
+  console.log(telemetryLine(event, payload));
 }
 
 function getSiteKeywords(domain) {
@@ -683,14 +711,14 @@ class QRMonitorSession extends EventEmitter {
     const clickRes = resolveLoginEntryTelemetry(selectorResult, keywordResult);
     const afterClickUrl = page.url();
 
-    console.log(telemetryLine('login_click', {
+    logTelemetry('login_click', {
       domain: this.targetDomain,
       path: clickRes.path,
       selector: clickRes.selector || '-',
       tag: clickRes.tag || '-',
       beforeUrl,
       afterUrl: afterClickUrl,
-    }));
+    });
 
     if (clickRes.clicked) {
       this.updateState({
@@ -699,11 +727,11 @@ class QRMonitorSession extends EventEmitter {
       });
       await new Promise((resolve) => setTimeout(resolve, 1200));
       const afterWaitUrl = page.url();
-      console.log(telemetryLine('login_transition', {
+      logTelemetry('login_transition', {
         domain: this.targetDomain,
         beforeUrl,
         afterUrl: afterWaitUrl,
-      }));
+      });
       return this.hasLoginModal(page);
     }
 
@@ -1342,7 +1370,7 @@ class QRMonitorSession extends EventEmitter {
 
       const preVerify = await this.detectLoginVerification(page);
       this.updateState({ loginVerification: preVerify });
-      console.log(telemetryLine('post_scan_verify', {
+      logTelemetry('post_scan_verify', {
         domain: this.targetDomain,
         stage: 'pre',
         success: preVerify.success,
@@ -1350,7 +1378,7 @@ class QRMonitorSession extends EventEmitter {
         markerType: preVerify.markerType,
         host: preVerify.details?.currentHost || '-',
         cookies: (preVerify.details?.matchedCookies || []).join('|') || '-',
-      }));
+      });
       if (preVerify.success) {
         this.updateState({
           status: 'logged_in',
@@ -1412,7 +1440,7 @@ class QRMonitorSession extends EventEmitter {
 
       const postVerify = await this.detectLoginVerification(page);
       this.updateState({ loginVerification: postVerify });
-      console.log(telemetryLine('post_scan_verify', {
+      logTelemetry('post_scan_verify', {
         domain: this.targetDomain,
         stage: 'post',
         success: postVerify.success,
@@ -1420,7 +1448,7 @@ class QRMonitorSession extends EventEmitter {
         markerType: postVerify.markerType,
         host: postVerify.details?.currentHost || '-',
         cookies: (postVerify.details?.matchedCookies || []).join('|') || '-',
-      }));
+      });
       if (postVerify.success) {
         this.updateState({
           status: 'logged_in',
